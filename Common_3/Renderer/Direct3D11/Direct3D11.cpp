@@ -1176,6 +1176,8 @@ static void destroy_default_resources(Renderer* pRenderer)
 /************************************************************************/
 // Renderer Init Remove
 /************************************************************************/
+#include "renderdoc_app.h"
+static RENDERDOC_API_1_4_0* rdoc_api = nullptr;
 void initRenderer(const char* appName, const RendererDesc* settings, Renderer** ppRenderer)
 {
 	Renderer* pRenderer = (Renderer*)conf_calloc(1, sizeof(*pRenderer));
@@ -1188,7 +1190,15 @@ void initRenderer(const char* appName, const RendererDesc* settings, Renderer** 
 	memcpy(&(pRenderer->mSettings), settings, sizeof(*settings));
 	pRenderer->mSettings.mApi = RENDERER_API_D3D11;
 	pRenderer->mSettings.mShaderTarget = shader_target_5_0;
-
+	{
+		const auto rdoc_dll = LoadLibraryA("renderdoc.dll");
+		if (HMODULE mod = GetModuleHandleA("renderdoc.dll"))
+		{
+			auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+			auto ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_4_0, (void **)&rdoc_api);
+			rdoc_api->MaskOverlayBits(0, eRENDERDOC_Overlay_All);
+		}
+	}
 	// Initialize the D3D12 bits
 	{
 		AddDevice(pRenderer);

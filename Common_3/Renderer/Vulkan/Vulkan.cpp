@@ -2421,6 +2421,8 @@ namespace vk {
 /************************************************************************/
 // Renderer Init Remove
 /************************************************************************/
+#include "renderdoc_app.h"
+static RENDERDOC_API_1_4_0* rdoc_api = nullptr;
 void initRenderer(const char* app_name, const RendererDesc* settings, Renderer** ppRenderer)
 {
 	Renderer* pRenderer = (Renderer*)conf_calloc(1, sizeof(*pRenderer));
@@ -2455,7 +2457,17 @@ void initRenderer(const char* app_name, const RendererDesc* settings, Renderer**
 			LOGF(LogLevel::eERROR, "Failed to initialize Vulkan");
 			return;
 		}
-
+		// must be hooked before create instance
+		{
+			const auto rdoc_dll = LoadLibraryA("renderdoc.dll");
+			if (HMODULE mod = GetModuleHandleA("renderdoc.dll"))
+			{
+				auto RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(mod, "RENDERDOC_GetAPI");
+				auto ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_4_0, (void **)&rdoc_api);
+				rdoc_api->MaskOverlayBits(0, eRENDERDOC_Overlay_All);
+				assert(ret == 1);
+			}
+		}
 		CreateInstance(app_name, pRenderer);
 		AddDevice(pRenderer);
 		//anything below LOW preset is not supported and we will exit
