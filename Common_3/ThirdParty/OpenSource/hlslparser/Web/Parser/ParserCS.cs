@@ -85,7 +85,7 @@ namespace Parser
                 {
                     UseShellExecute = false,
                     FileName = fullPath,
-                    Arguments = String.Format("{0} {1} {2} {3} {4}", shader, _language, tempFileIn.FilePath, entryName, outputFilePath),
+                    Arguments = String.Format("{0} {1} {2} -E {3} -Fo {4}", shader, _language, tempFileIn.FilePath, entryName, outputFilePath),
                     RedirectStandardError = true,
                     RedirectStandardOutput = true,
                     CreateNoWindow = true,
@@ -97,7 +97,6 @@ namespace Parser
                 process.WaitForExit();
 
                 tempFileIn.Dispose();
-
 
                 var result = File.ReadAllText(outputFilePath).Replace("\r\n", "\n");
 

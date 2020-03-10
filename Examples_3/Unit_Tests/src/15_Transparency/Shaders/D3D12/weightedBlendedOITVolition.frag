@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -22,7 +22,7 @@
 * under the License.
 */
 
-#include "shading.hlsl"
+#include "shading.h"
 
 struct VSOutput
 {
@@ -39,7 +39,7 @@ struct PSOutput
 	float4 Revealage : SV_Target1;
 };
 
-cbuffer WBOITSettings : register(b0, space1)
+cbuffer WBOITSettings : UNIT_CBV_WBOIT
 {
 	float opacitySensitivity = 3.0; // Should be greater than 1, so that we only downweight nearly transparent things. Otherwise, everything at the same depth should get equal weight. Can be artist controlled
 	float weightBias = 5.0; //Must be greater than zero. Weight bias helps prevent distant things from getting hugely lower weight than near things, as well as preventing floating point underflow

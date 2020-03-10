@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,7 +28,7 @@ struct VSOut
 	noperspective float2 texcoord : TEXCOORD0;
 };
 
-Texture2D uTex : register(t0, space2);
+Texture2D uTex : register(t0);
 SamplerState uSampler : register(s1);
 
 float4 main(VSOut input) : SV_Target

@@ -6834,9 +6834,8 @@ static bool NavScoreItem(ImGuiNavMoveResult* result, ImRect cand)
     NavClampRectToVisibleAreaForMoveDir(g.NavMoveClipDir, cand, window->ClipRect);
 
     // Compute distance between boxes
-    // FIXME-NAV: Introducing biases for vertical navigation, needs to be removed.
     float dbx = NavScoreItemDistInterval(cand.Min.x, cand.Max.x, curr.Min.x, curr.Max.x);
-    float dby = NavScoreItemDistInterval(ImLerp(cand.Min.y, cand.Max.y, 0.2f), ImLerp(cand.Min.y, cand.Max.y, 0.8f), ImLerp(curr.Min.y, curr.Max.y, 0.2f), ImLerp(curr.Min.y, curr.Max.y, 0.8f)); // Scale down on Y to keep using box-distance for vertically touching items
+    float dby = NavScoreItemDistInterval(cand.Min.y, cand.Max.y, curr.Min.y, curr.Max.y);
     if (dby != 0.0f && dbx != 0.0f)
        dbx = (dbx/1000.0f) + ((dbx > 0.0f) ? +1.0f : -1.0f);
     float dist_box = ImFabs(dbx) + ImFabs(dby);
@@ -8531,14 +8530,16 @@ ImGuiWindowSettings* ImGui::FindWindowSettings(ImGuiID id)
 
 void ImGui::LoadIniSettingsFromDisk(const char* ini_filename)
 {
-	size_t file_data_size = 0;
-	File toOpen;
-	toOpen.Open(ini_filename, FileMode::FM_ReadAppend, FSR_Absolute);
-	if (toOpen.IsOpen())
+    PathHandle path = fsCreatePath(fsGetSystemFileSystem(), ini_filename);
+    FileStream* fh = fsOpenFile(path, FM_READ_APPEND);
+
+	if (fh)
 	{
-		eastl::string textFile = toOpen.ReadText();
-		LoadIniSettingsFromMemory(textFile.c_str(), (size_t)file_data_size);
-		toOpen.Close();
+        ssize_t fileSize = fsGetStreamFileSize(fh);
+        char *fileContents = (char*)ImGui::MemAlloc(fileSize);
+        fsReadFromStreamString(fh, fileContents, fileSize);
+		LoadIniSettingsFromMemory(fileContents, (size_t)fileSize);
+        fsCloseStream(fh);
 	}
 }
 
@@ -8614,18 +8615,19 @@ void ImGui::LoadIniSettingsFromMemory(const char* ini_data, size_t ini_size)
 
 void ImGui::SaveIniSettingsToDisk(const char* ini_filename)
 {
-    ImGuiContext& g = *GImGui;
     if (!ini_filename)
         return;
 
     size_t ini_data_size = 0;
     const char* ini_data = SaveIniSettingsToMemory(&ini_data_size);
-	File f;
-	f.Open(ini_filename, FileMode::FM_Write, FSR_Absolute);
-    if (!f.IsOpen())
-        return;
-	f.Write(ini_data, (unsigned int)ini_data_size);
-	f.Close();
+    
+    PathHandle path = fsCreatePath(fsGetSystemFileSystem(), ini_filename);
+    FileStream* fh = fsOpenFile(path, FM_WRITE);
+    
+	if (!fh)
+		return;
+    fsWriteToStream(fh, ini_data, ini_data_size);
+    fsCloseStream(fh);
 }
 
 // Call registered handlers (e.g. SettingsHandlerWindow_WriteAll() + custom handlers) to write their stuff into a text buffer

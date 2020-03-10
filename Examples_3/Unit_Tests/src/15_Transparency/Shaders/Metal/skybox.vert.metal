@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -38,13 +38,20 @@ struct VSInput
 {
     float4 Position [[attribute(0)]];
 };
-vertex VSOutput stageMain(VSInput In                              [[stage_in]],
-                       constant SkyboxUniform& SkyboxUniformBlock [[buffer(1)]])
+
+struct VSData {
+    constant SkyboxUniform& SkyboxUniformBlock;
+};
+
+vertex VSOutput stageMain(
+    VSInput In                              [[stage_in]],
+    constant VSData& vsData                 [[buffer(UPDATE_FREQ_PER_FRAME)]]
+)
 {
 	VSOutput result;
  
   float4 p = float4(In.Position.xyz, 1.0);
-  float4x4 m =  SkyboxUniformBlock.vp;
+  float4x4 m =  vsData.SkyboxUniformBlock.vp;
   p = m * p;
   result.Position = p.xyww;
   result.TexCoord = In.Position;

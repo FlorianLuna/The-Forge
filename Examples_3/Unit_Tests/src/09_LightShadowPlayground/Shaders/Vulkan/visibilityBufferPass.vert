@@ -5,7 +5,7 @@
 
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -34,7 +34,7 @@
 #include "Shader_Defs.h"
 #include "Packing.h"
 
-layout (set = 1, binding = 0) uniform objectUniformBlock
+layout (UPDATE_FREQ_PER_DRAW, binding = 0) uniform objectUniformBlock
 {
 	mat4 WorldViewProjMat;
     mat4 WorldMat;

@@ -1,10 +1,7 @@
 #version 450 core
-#if !defined(WINDOWS) && !defined(ANDROID) && !defined(LINUX)
-#define WINDOWS 	// Assume windows if no platform define has been added to the shader
-#endif
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -134,86 +131,61 @@ struct VertexPos
 	float x, y, z;
 };
 
-#ifdef LINUX
-struct VertexNormal
-{
-	float x, y, z;
-};
-
-struct VertexTangent
-{
-	float x, y, z;
-};
-#endif
-
-
-layout(std430, set = 0, binding = 0) readonly buffer vertexPos
+layout(std430, UPDATE_FREQ_NONE, binding = 0) readonly buffer vertexPos
 {
 	VertexPos vertexPosData[];
 };
 
-layout(std430, set = 0, binding = 1) readonly buffer vertexTexCoord
+layout(std430, UPDATE_FREQ_NONE, binding = 1) readonly buffer vertexTexCoord
 {
-#ifdef WINDOWS
 	uint vertexTexCoordData[];
-#elif defined(LINUX)
-	vec2 vertexTexCoordData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 2) readonly buffer vertexNormal
+layout(std430, UPDATE_FREQ_NONE, binding = 2) readonly buffer vertexNormal
 {
-#ifdef WINDOWS
 	uint vertexNormalData[];
-#elif defined(LINUX)
-	VertexNormal vertexNormalData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 3) readonly buffer vertexTangent
+layout(std430, UPDATE_FREQ_NONE, binding = 3) readonly buffer vertexTangent
 {
-#ifdef WINDOWS
 	uint vertexTangentData[];
-#elif defined(LINUX)
-	VertexTangent vertexTangentData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 4) readonly buffer filteredIndexBuffer
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 4) readonly buffer filteredIndexBuffer
 {
 	uint filteredIndexBufferData[];
 };
 
-layout(std430, set = 0, binding = 5) readonly buffer indirectMaterialBuffer
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 5) readonly buffer indirectMaterialBuffer
 {
 	uint indirectMaterialBufferData[];
 };
 
-layout(std430, set = 0, binding = 6) readonly buffer meshConstantsBuffer
+layout(std430, UPDATE_FREQ_NONE, binding = 6) readonly buffer meshConstantsBuffer
 {
 	MeshConstants meshConstantsBufferData[];
 };
 
-layout(set = 0, binding = 7) uniform sampler textureSampler;
-layout(set = 0, binding = 8) uniform sampler clampMiplessLinearSampler;
-layout(set = 0, binding = 9) uniform sampler clampMiplessNearSampler;
-layout(set = 0, binding = 10) uniform sampler clampBorderNearSampler;
-layout(set = 0, binding = 11) uniform sampler ShadowCmpSampler;
+layout(UPDATE_FREQ_NONE, binding = 7) uniform sampler textureSampler;
+layout(UPDATE_FREQ_NONE, binding = 8) uniform sampler clampMiplessLinearSampler;
+layout(UPDATE_FREQ_NONE, binding = 9) uniform sampler clampMiplessNearSampler;
+layout(UPDATE_FREQ_NONE, binding = 10) uniform sampler clampBorderNearSampler;
+layout(UPDATE_FREQ_NONE, binding = 11) uniform sampler ShadowCmpSampler;
 
 // Per frame descriptors
-layout(std430, set = 0, binding = 12) readonly buffer indirectDrawArgsBlock
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 12) readonly buffer indirectDrawArgsBlock
 {
 	uint indirectDrawArgsData[];
 } indirectDrawArgs[2];
 
 
-layout (set = 0, binding = 13) uniform objectUniformBlock
+layout (UPDATE_FREQ_PER_FRAME, binding = 13) uniform objectUniformBlock
 {
 	mat4 WorldViewProjMat;
     mat4 WorldMat;
 };
 
-layout(column_major, set = 0, binding = 14) uniform cameraUniformBlock
+layout(column_major, UPDATE_FREQ_PER_FRAME, binding = 14) uniform cameraUniformBlock
 {
     mat4 View;
     mat4 Project;
@@ -235,7 +207,7 @@ layout(column_major, set = 0, binding = 14) uniform cameraUniformBlock
     vec4 mDeviceZToWorldZ;
 };
 
-layout(set = 0 , binding = 15) uniform lightUniformBlock
+layout(UPDATE_FREQ_PER_FRAME, binding = 15) uniform lightUniformBlock
 {
 	mat4 lightViewProj;
     vec4 lightPosition;
@@ -245,19 +217,19 @@ layout(set = 0 , binding = 15) uniform lightUniformBlock
 	vec3 mLightDir;
 };
 
-layout(set = 1, binding = 0) uniform ESMInputConstants
+layout(UPDATE_FREQ_PER_FRAME, binding = 0) uniform ESMInputConstants
 {
     float mEsmControl;
 };
 
-layout(column_major, set = 0 , binding = 16) uniform renderSettingUniformBlock
+layout(column_major, UPDATE_FREQ_PER_FRAME, binding = 16) uniform renderSettingUniformBlock
 {
     vec4 WindowDimension;
     int ShadowType;
 };
 
 
-layout(row_major, set = 1, binding = 17) uniform ASMUniformBlock
+layout(row_major, UPDATE_FREQ_PER_FRAME, binding = 17) uniform ASMUniformBlock
 {
 	mat4 mIndexTexMat;
 	mat4 mPrerenderIndexTexMat;
@@ -269,22 +241,19 @@ layout(row_major, set = 1, binding = 17) uniform ASMUniformBlock
 	float mPenumbraSize;
 };
 
+layout(UPDATE_FREQ_NONE, binding = 18) uniform texture2D vbPassTexture;
 
+layout(UPDATE_FREQ_NONE, binding = 19) uniform texture2D SDFShadowTexture;
 
-layout(set = 0, binding = 18) uniform texture2D vbPassTexture;
+layout(UPDATE_FREQ_NONE, binding = 20) uniform texture2D IndexTexture[10];
+layout(UPDATE_FREQ_NONE, binding = 21) uniform texture2D DepthAtlasTexture;
+layout(UPDATE_FREQ_NONE, binding = 22) uniform texture2D DEMTexture;
+layout(UPDATE_FREQ_NONE, binding = 23) uniform texture2D PrerenderLodClampTexture;
+layout(UPDATE_FREQ_NONE, binding = 24) uniform texture2D ESMShadowTexture;
 
-
-layout(set = 0, binding = 19) uniform texture2D SDFShadowTexture;
-
-layout(set = 1, binding = 20) uniform texture2D IndexTexture[10];
-layout(set = 1, binding = 30) uniform texture2D DepthAtlasTexture;
-layout(set = 1, binding = 31) uniform texture2D DEMTexture;
-layout(set = 1, binding = 32) uniform texture2D PrerenderLodClampTexture;
-layout(set = 1, binding = 33) uniform texture2D ESMShadowTexture;
-
-layout(set = 0, binding = 34) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
-layout(set = 0, binding = 35 + MAX_TEXTURE_UNITS) uniform texture2D normalMaps[MAX_TEXTURE_UNITS];
-layout(set = 0, binding = 36 + MAX_TEXTURE_UNITS * 2) uniform texture2D specularMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 25) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 26) uniform texture2D normalMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 27) uniform texture2D specularMaps[MAX_TEXTURE_UNITS];
 
 
 /*layout(push_constant) uniform RootConstantDrawScene_Block
@@ -395,15 +364,27 @@ vec4 SampleFrustumIndirectionTexture(ASMFrustumDesc frustumDesc, float mip)
 	float lerpVal = fract(mip);
 	uint floorMip = uint(floor(mip));
 	
+#if VK_EXT_DESCRIPTOR_INDEXING_ENABLED
 	vec4 indirectionCoordData =  textureLod(  sampler2D(
 		IndexTexture[ nonuniformEXT( frustumDesc.mStartingMip + floorMip ) ], clampBorderNearSampler), 
 			vec2(frustumDesc.mIndexCoord.xy), 0);
+#else
+	vec4 indirectionCoordData =  textureLod(  sampler2D(
+		IndexTexture[ (frustumDesc.mStartingMip + floorMip ) ], clampBorderNearSampler), 
+			vec2(frustumDesc.mIndexCoord.xy), 0);
+#endif
 
 	if(lerpVal > 0.0)
 	{
+#if VK_EXT_DESCRIPTOR_INDEXING_ENABLED
 		vec4 upperIndirectionCoordData = textureLod(  sampler2D(
 			IndexTexture[nonuniformEXT(frustumDesc.mStartingMip + floorMip + 1)], clampBorderNearSampler), 
 			vec2(frustumDesc.mIndexCoord.xy), 0);
+#else
+	vec4 upperIndirectionCoordData = textureLod(  sampler2D(
+		IndexTexture[(frustumDesc.mStartingMip + floorMip + 1)], clampBorderNearSampler), 
+		vec2(frustumDesc.mIndexCoord.xy), 0);
+#endif
 
 		indirectionCoordData = mix(indirectionCoordData, upperIndirectionCoordData, lerpVal);
 	}
@@ -503,8 +484,13 @@ float GetBlockerDistance(ASMFrustumDesc frustumDesc, vec3 worldPos,
 	mat4 indexTexMat, vec3 blockerSearchDir, float mip)
 {
 	vec3 indexCoord = GetIndirectionTextureCoord(indexTexMat, worldPos);
+#if VK_EXT_DESCRIPTOR_INDEXING_ENABLED
 	vec4 indirectionData = textureLod(sampler2D(IndexTexture[  nonuniformEXT(frustumDesc.mStartingMip + uint(mip)) ],
 		clampBorderNearSampler),vec2(indexCoord.xy), 0).rgba;
+#else
+	vec4 indirectionData = textureLod(sampler2D(IndexTexture[ (frustumDesc.mStartingMip + uint(mip)) ],
+		clampBorderNearSampler),vec2(indexCoord.xy), 0).rgba;
+#endif
 
 	vec3 tileCoord = GetASMTileCoord(indexCoord, indirectionData );
 
@@ -667,15 +653,9 @@ void main()
 		// Apply perspective correction to texture coordinates
 		mat3x2 texCoords =
 		{
-#ifdef WINDOWS
 			unpack2Floats(vertexTexCoordData[index0]) * one_over_w[0],
 			unpack2Floats(vertexTexCoordData[index1]) * one_over_w[1],
 			unpack2Floats(vertexTexCoordData[index2]) * one_over_w[2]
-#elif defined(LINUX)
-			vertexTexCoordData[index0] * one_over_w[0],
-			vertexTexCoordData[index1] * one_over_w[1],
-			vertexTexCoordData[index2] * one_over_w[2]
-#endif
 		};
 
 		// Interpolate texture coordinates and calculate the gradients for texture sampling with mipmapping support
@@ -691,46 +671,22 @@ void main()
 
 		// NORMAL INTERPOLATION
 		// Apply perspective division to normals
-#ifdef LINUX
-		// Load normals
-		vec3 v0normal = vec3(vertexNormalData[index0].x, vertexNormalData[index0].y, vertexNormalData[index0].z);
-		vec3 v1normal = vec3(vertexNormalData[index1].x, vertexNormalData[index1].y, vertexNormalData[index1].z);
-		vec3 v2normal = vec3(vertexNormalData[index2].x, vertexNormalData[index2].y, vertexNormalData[index2].z);
-#endif
 		mat3x3 normals =
 		{
-#ifdef WINDOWS
 			decodeDir(unpackUnorm2x16(vertexNormalData[index0])) * one_over_w[0],
 			decodeDir(unpackUnorm2x16(vertexNormalData[index1])) * one_over_w[1],
 			decodeDir(unpackUnorm2x16(vertexNormalData[index2])) * one_over_w[2]
-#elif defined(LINUX)
-			v0normal * one_over_w[0],
-			v1normal * one_over_w[1],
-			v2normal * one_over_w[2]
-#endif
 		};
 
 		vec3 normal = normalize(interpolateAttribute(normals, derivativesOut.db_dx, derivativesOut.db_dy, d));
 
 		// TANGENT INTERPOLATION
 		// Apply perspective division to tangents
-#ifdef LINUX
-		// Load tangents
-		vec3 v0tan = vec3(vertexTangentData[index0].x, vertexTangentData[index0].y, vertexTangentData[index0].z);
-		vec3 v1tan = vec3(vertexTangentData[index1].x, vertexTangentData[index1].y, vertexTangentData[index1].z);
-		vec3 v2tan = vec3(vertexTangentData[index2].x, vertexTangentData[index2].y, vertexTangentData[index2].z);
-#endif
 		mat3x3 tangents =
 		{
-#ifdef WINDOWS
 			decodeDir(unpackUnorm2x16(vertexTangentData[index0])) * one_over_w[0],
 			decodeDir(unpackUnorm2x16(vertexTangentData[index1])) * one_over_w[1],
 			decodeDir(unpackUnorm2x16(vertexTangentData[index2])) * one_over_w[2]
-#elif defined(LINUX)
-			v0tan * one_over_w[0],
-			v1tan * one_over_w[1],
-			v2tan * one_over_w[2]
-#endif
 		};
 
 		vec3 tangent = normalize(interpolateAttribute(tangents, derivativesOut.db_dx, derivativesOut.db_dy, d));

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -37,34 +37,19 @@
 #include "../../../../Common_3/OS/Interfaces/ILog.h"
 #include "../../../../Common_3/OS/Interfaces/IFileSystem.h"
 #include "../../../../Common_3/OS/Interfaces/ITime.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
 
 // Rendering
 #include "../../../../Common_3/Renderer/IRenderer.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 
 // Middleware packages
 #include "../../../../Middleware_3/UI/AppUI.h"
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
 
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
 
 #include "../../../../Common_3/OS/Interfaces/IMemory.h"
-
-const char* pszBases[FSR_Count] = {
-	"../../../src/13_UserInterface/",       // FSR_BinShaders
-	"../../../src/13_UserInterface/",       // FSR_SrcShaders
-	"../../../UnitTestResources/",          // FSR_Textures
-	"../../../UnitTestResources/",          // FSR_Meshes
-	"../../../UnitTestResources/",          // FSR_Builtin_Fonts
-	"../../../src/13_UserInterface/",       // FSR_GpuConfig
-	"",                                     // FSR_Animation
-	"",                                     // FSR_Audio
-	"",                                     // FSR_OtherFiles
-	"../../../../../Middleware_3/Text/",    // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",      // FSR_MIDDLEWARE_UI
-};
 
 //--------------------------------------------------------------------------------------------
 // RENDERING PIPELINE DATA
@@ -83,24 +68,17 @@ Semaphore*    pRenderCompleteSemaphores[gImageCount] = { NULL };
 
 Texture*	  pSpriteTexture = NULL;
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-VirtualJoystickUI gVirtualJoystick;
-#endif
-DepthState* pDepth = NULL;
-
 //Buffer*			pProjViewUniformBuffer[gImageCount] = { NULL };
 uint32_t gFrameIndex = 0;
 
 //--------------------------------------------------------------------------------------------
 // CAMERA CONTROLLER & SYSTEMS (File/Log/UI)
 //--------------------------------------------------------------------------------------------
-ICameraController* pCameraController = NULL;
 UIApp         gAppUI;
 GuiComponent* pStandaloneControlsGUIWindow = NULL;
 GuiComponent* pGroupedGUIWindow = NULL;
 
 TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00dddd, 18);
-
 //--------------------------------------------------------------------------------------------
 // UI UNIT TEST DATA
 //--------------------------------------------------------------------------------------------
@@ -132,7 +110,7 @@ UserInterfaceUnitTestingData gUIData;
 
 // ContextMenu Items and Callbacks Example:
 //
-eastl::string sContextMenuItems[7] = { "Random Background Color",  "Random Profiler Color",    "Dummy Context Menu Item3",
+const char* sContextMenuItems[7] = { "Random Background Color",  "Random Profiler Color",    "Dummy Context Menu Item3",
 										 "Dummy Context Menu Item4", "Dummy Context Menu Item5", "Dummy Context Menu Item6",
 										 "Dummy Context Menu Item7" };
 void            fnItem1Callback()    // sets slider color value: RGBA
@@ -211,7 +189,21 @@ class UserInterfaceUnitTest : public IApp
 public:
 	bool Init()
 	{
-		InputSystem::SetHideMouseCursorWhileCaptured(false);
+        // FILE PATHS
+        PathHandle programDirectory = fsCopyProgramDirectoryPath();
+        if (!fsPlatformUsesBundledResources())
+        {
+            PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/13_UserInterface");
+            fsSetResourceDirectoryRootPath(resourceDirRoot);
+            
+            fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../UnitTestResources/Textures");
+            fsSetRelativePathForResourceDirectory(RD_MESHES,          "../../UnitTestResources/Meshes");
+            fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,    "../../UnitTestResources/Fonts");
+            fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,      "../../UnitTestResources/Animation");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,  "../../../../Middleware_3/Text");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,    "../../../../Middleware_3/UI");
+        }
+        
 		// WINDOW AND RENDERER SETUP
 		//
 		RendererDesc settings = { 0 };
@@ -222,10 +214,15 @@ public:
 		// CREATE COMMAND LIST AND GRAPHICS/COMPUTE QUEUES
 		//
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
+		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -237,41 +234,14 @@ public:
 		// INITIALIZE RESOURCE/DEBUG SYSTEMS
 		//
 		initResourceLoaderInterface(pRenderer);
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		if (!gVirtualJoystick.Init(pRenderer, "circlepad", FSR_Textures))
-			return false;
-#endif
 
+        PathHandle spritesPath = fsCopyPathInResourceDirectory(RD_TEXTURES, "sprites");
 		TextureLoadDesc textureDesc = {};
-		textureDesc.mRoot = FSR_Textures;
 		textureDesc.ppTexture = &pSpriteTexture;
-		textureDesc.pFilename = "sprites";
-		addResource(&textureDesc);
+		textureDesc.pFilePath = spritesPath;
+		addResource(&textureDesc, NULL, LOAD_PRIORITY_NORMAL);
 
-		finishResourceLoading();
-
-		// INITIALIZE PIPILINE STATES
-		//
-		DepthStateDesc depthStateDesc = {};
-		depthStateDesc.mDepthTest = true;
-		depthStateDesc.mDepthWrite = true;
-		depthStateDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateDesc, &pDepth);
-
-		// SETUP THE MAIN CAMERA
-		//
-		const CameraMotionParameters cmp{ 160.0f, 600.0f, 200.0f };
-		const vec3                   camPos{ 48.0f, 48.0f, 20.0f };
-		const vec3                   lookAt{ 0 };
-		pCameraController = createFpsCameraController(camPos, lookAt);
-
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.InitLRSticks();
-		pCameraController->setVirtualJoystick(&gVirtualJoystick);
-#endif
-		pCameraController->setMotionParameters(cmp);
-
-		InputSystem::RegisterInputEvent(cameraInputEvent);
+		waitForAllResourceLoads();
 
 		// INITIALIZE THE USER INTERFACE
 		//
@@ -281,7 +251,7 @@ public:
 			return false;
 		}
 
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
+		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
 
 		// Add the GUI Panels/Windows
 		const TextDrawDesc UIPanelWindowTitleTextDesc = { 0, 0xffff00ff, 16 };
@@ -411,6 +381,33 @@ public:
 			pStandaloneControlsGUIWindow->AddWidget(CollapsingTexPreviewWidgets);
 		}
 
+		if (!initInputSystem(pWindow))
+			return false;
+
+		// App Actions
+		InputActionDesc actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				static uint8_t virtualKeyboard = 0;
+				bool capture = gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition);
+				setEnableCaptureInput(capture && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase);
+				if (gAppUI.WantTextInput() != virtualKeyboard)
+				{
+					virtualKeyboard = gAppUI.WantTextInput();
+					setVirtualKeyboard(virtualKeyboard);
+				}
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::TEXT, [](InputActionContext* ctx) { return gAppUI.OnText(ctx->pText); } };
+		addInputAction(&actionDesc);
+
 		return true;
 	}
 
@@ -419,11 +416,7 @@ public:
 		// wait for rendering to finish before freeing resources
 		waitQueueIdle(pGraphicsQueue);
 
-		destroyCameraController(pCameraController);
-
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.Exit();
-#endif
+		exitInputSystem();
 
 		gAppUI.Exit();
 
@@ -434,8 +427,6 @@ public:
 
 		removeResource(pSpriteTexture);
 
-		removeDepthState(pDepth);
-
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			removeFence(pRenderer, pRenderCompleteFences[i]);
@@ -443,11 +434,11 @@ public:
 		}
 		removeSemaphore(pRenderer, pImageAcquiredSemaphore);
 
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
 
-		removeResourceLoaderInterface(pRenderer);
-		removeQueue(pGraphicsQueue);
+		exitResourceLoaderInterface(pRenderer);
+		removeQueue(pRenderer, pGraphicsQueue);
 		removeRenderer(pRenderer);
 	}
 
@@ -460,13 +451,8 @@ public:
 
 		// LOAD USER INTERFACE
 		//
-		if (!gAppUI.Load(pSwapChain->ppSwapchainRenderTargets))
+		if (!gAppUI.Load(pSwapChain->ppRenderTargets))
 			return false;
-
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		if (!gVirtualJoystick.Load(pSwapChain->ppSwapchainRenderTargets[0]))
-			return false;
-#endif
 
 		return true;
 	}
@@ -477,41 +463,12 @@ public:
 
 		gAppUI.Unload();
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.Unload();
-#endif
-
 		removeSwapChain(pRenderer, pSwapChain);
 	}
 
 	void Update(float deltaTime)
 	{
-		/************************************************************************/
-		// Input
-		/************************************************************************/
-		if (InputSystem::GetBoolInput(KEY_BUTTON_X_TRIGGERED))
-		{
-			RecenterCameraView(170.0f);
-		}
-
-		pCameraController->update(deltaTime);
-
-		/************************************************************************/
-		// Scene Update
-		/************************************************************************/
-		static float currentTime = 0.0f;
-		currentTime += deltaTime * 1000.0f;
-
-#if 0    // quick code template in case we decide to user viewProj matrices \
-		 // update camera with time
-		mat4 viewMat = pCameraController->getViewMatrix();
-
-		const float aspectInverse = (float)mSettings.mHeight / (float)mSettings.mWidth;
-		const float horizontal_fov = PI / 2.0f;
-		mat4 projMat = mat4::perspective(horizontal_fov, aspectInverse, 0.1f, 1000.0f);
-		gUniformData.mProjectView = projMat * viewMat;
-#endif
-
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
 		/************************************************************************/
 		// GUI
 		/************************************************************************/
@@ -541,25 +498,25 @@ public:
 			waitForFences(pRenderer, 1, &pNextFence);
 
 		// Acquire the main render target from the swapchain
-		RenderTarget* pRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
+		RenderTarget* pRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 		Semaphore*    pRenderCompleteSemaphore = pRenderCompleteSemaphores[gFrameIndex];
 		Fence*        pRenderCompleteFence = pRenderCompleteFences[gFrameIndex];
 		Cmd*          cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);    // start recording commands
 
-		TextureBarrier barriers[] =    // wait for resource transition
+		RenderTargetBarrier barriers[] =    // wait for resource transition
 		{
-			{ pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
+			{ pRenderTarget, RESOURCE_STATE_RENDER_TARGET },
 		};
-		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
 
 		// bind and clear the render target
 		LoadActionsDesc loadActions = {};    // render target clean command
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
 		loadActions.mClearColorValues[0] = clearVal;
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 		//
 		// world's draw logic goes here - this is a UI unit test so we don't do any world rendering.
@@ -569,9 +526,6 @@ public:
 		//
 		cmdBeginDebugMarker(cmd, 0, 1, 0, "Draw UI");
 		gTimer.GetUSec(true);
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.Draw(cmd, { 1.0f, 1.0f, 1.0f, 1.0f });
-#endif
 
 		gAppUI.Gui(pStandaloneControlsGUIWindow);    // adds the gui element to AppUI::ComponentsToUpdate list
 		gAppUI.DrawText(
@@ -583,11 +537,25 @@ public:
 
 		// PRESENT THE GRPAHICS QUEUE
 		//
-		barriers[0] = { pRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, true);
+		barriers[0] = { pRenderTarget, RESOURCE_STATE_PRESENT };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
 		endCmd(cmd);
-		queueSubmit(pGraphicsQueue, 1, &cmd, pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1, &pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = &cmd;
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 	}
 
 	const char* GetName() { return "13_UserInterface"; }
@@ -601,34 +569,11 @@ public:
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
 		swapChainDesc.mEnableVsync = false;
 		::addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);
 
 		return pSwapChain != NULL;
-	}
-
-	void RecenterCameraView(float maxDistance, vec3 lookAt = vec3(0))
-	{
-		vec3 p = pCameraController->getViewPosition();
-		vec3 d = p - lookAt;
-
-		float lenSqr = lengthSqr(d);
-		if (lenSqr > (maxDistance * maxDistance))
-		{
-			d *= (maxDistance / sqrtf(lenSqr));
-		}
-
-		p = d + lookAt;
-		pCameraController->moveTo(p);
-		pCameraController->lookAt(lookAt);
-	}
-
-	static bool cameraInputEvent(const ButtonData* data)
-	{
-		pCameraController->onInputEvent(data);
-		return true;
 	}
 };
 

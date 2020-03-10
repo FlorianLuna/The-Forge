@@ -5,7 +5,7 @@
 
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -35,7 +35,7 @@
 #include "shader_defs.h"
 #include "packing.h"
 
-layout (set = 0, binding = 0) uniform uniforms
+layout (UPDATE_FREQ_PER_FRAME, binding = 0) uniform uniforms
 {
 	PerFrameConstants uniformsData;
 };

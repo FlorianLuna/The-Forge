@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -33,12 +33,11 @@
 #include "../../../../Common_3/OS/Interfaces/ILog.h"
 #include "../../../../Common_3/OS/Interfaces/IFileSystem.h"
 #include "../../../../Common_3/OS/Interfaces/ITime.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
 #include "../../../../Middleware_3/UI/AppUI.h"
 #include "../../../../Common_3/Renderer/IRenderer.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
 
@@ -73,17 +72,14 @@ RenderTarget* pRenderTargetIntermediate = NULL;
 
 Shader*           pShaderWave = NULL;
 Pipeline*         pPipelineWave = NULL;
-RootSignature*    pRootSignatureWave = NULL;
 Shader*           pShaderMagnify = NULL;
 Pipeline*         pPipelineMagnify = NULL;
-RootSignature*    pRootSignatureMagnify = NULL;
+RootSignature*    pRootSignature = NULL;
 
-DescriptorBinder* pDescriptorBinder = NULL;
+DescriptorSet*    pDescriptorSetUniforms = NULL;
+DescriptorSet*    pDescriptorSetTexture = NULL;
 
 Sampler* pSamplerPointWrap = NULL;
-
-DepthState*      pDepthNone = NULL;
-RasterizerState* pRasterizerCullNone = NULL;
 
 Buffer* pUniformBuffer[gImageCount] = { NULL };
 Buffer* pVertexBufferTriangle = NULL;
@@ -92,6 +88,8 @@ Buffer* pVertexBufferQuad = NULL;
 uint32_t gFrameIndex = 0;
 
 SceneConstantBuffer gSceneData;
+float2* pMovePosition = NULL;
+float2 gMoveDelta = {};
 
 /// UI
 UIApp         gAppUI;
@@ -112,23 +110,19 @@ enum RenderMode
 };
 int32_t gRenderModeToggles = 0;
 
+TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00ffff, 18);
 
-const char* pszBases[FSR_Count] = {
-	"../../../src/14_WaveIntrinsics/",      // FSR_BinShaders
-	"../../../src/14_WaveIntrinsics/",      // FSR_SrcShaders
-	"../../../UnitTestResources/",          // FSR_Textures
-	"../../../UnitTestResources/",          // FSR_Meshes
-	"../../../UnitTestResources/",          // FSR_Builtin_Fonts
-	"../../../src/14_WaveIntrinsics/",      // FSR_GpuConfig
-	"",                                     // FSR_Animation
-	"",                                     // FSR_Audio
-	"",                                     // FSR_OtherFiles
-	"../../../../../Middleware_3/Text/",    // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",      // FSR_MIDDLEWARE_UI
+struct Vertex
+{
+	float3 position;
+	float4 color;
 };
 
-
-TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00ffff, 18);
+struct Vertex2
+{
+	float3 position;
+	float2 uv;
+};
 
 class WaveIntrinsics: public IApp
 {
@@ -143,6 +137,21 @@ class WaveIntrinsics: public IApp
 
 	bool Init()
 	{
+        // FILE PATHS
+        PathHandle programDirectory = fsCopyProgramDirectoryPath();
+        if (!fsPlatformUsesBundledResources())
+        {
+            PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/14_WaveIntrinsics");
+            fsSetResourceDirectoryRootPath(resourceDirRoot);
+            
+            fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../UnitTestResources/Textures");
+            fsSetRelativePathForResourceDirectory(RD_MESHES,          "../../UnitTestResources/Meshes");
+            fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,    "../../UnitTestResources/Fonts");
+            fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,      "../../UnitTestResources/Animation");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,  "../../../../Middleware_3/Text");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,    "../../../../Middleware_3/UI");
+        }
+        
 		// window and renderer setup
 		RendererDesc settings = { 0 };
 
@@ -164,17 +173,21 @@ class WaveIntrinsics: public IApp
 		{
 			LOGF(LogLevel::eERROR, "This GPU model causes Internal Shader compiler errors on Metal when compiling the wave instrinsics.");
 			removeRenderer(pRenderer);
-			InputSystem::Shutdown();
 			//exit instead of returning not to trigger failure in Jenkins
 			exit(0);
 		}
 #endif
 
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
+		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -186,8 +199,8 @@ class WaveIntrinsics: public IApp
 		initResourceLoaderInterface(pRenderer);
 
 		ShaderLoadDesc waveShader = {};
-		waveShader.mStages[0] = { "wave.vert", NULL, 0, FSR_SrcShaders };
-		waveShader.mStages[1] = { "wave.frag", NULL, 0, FSR_SrcShaders };
+		waveShader.mStages[0] = { "wave.vert", NULL, 0, RD_SHADER_SOURCES };
+		waveShader.mStages[1] = { "wave.frag", NULL, 0, RD_SHADER_SOURCES };
 
 #if defined(_DURANGO)
 		waveShader.mTarget = shader_target_5_1;
@@ -204,8 +217,8 @@ class WaveIntrinsics: public IApp
 #endif
 
 		ShaderLoadDesc magnifyShader = {};
-		magnifyShader.mStages[0] = { "magnify.vert", NULL, 0, FSR_SrcShaders };
-		magnifyShader.mStages[1] = { "magnify.frag", NULL, 0, FSR_SrcShaders };
+		magnifyShader.mStages[0] = { "magnify.vert", NULL, 0, RD_SHADER_SOURCES };
+		magnifyShader.mStages[1] = { "magnify.frag", NULL, 0, RD_SHADER_SOURCES };
 
 		addShader(pRenderer, &waveShader, &pShaderWave);
 		addShader(pRenderer, &magnifyShader, &pShaderMagnify);
@@ -214,39 +227,20 @@ class WaveIntrinsics: public IApp
 									ADDRESS_MODE_REPEAT, ADDRESS_MODE_REPEAT, ADDRESS_MODE_CLAMP_TO_BORDER };
 		addSampler(pRenderer, &samplerDesc, &pSamplerPointWrap);
 
+		Shader* pShaders[] = { pShaderMagnify, pShaderWave };
 		const char*       pStaticSamplers[] = { "g_sampler" };
 		RootSignatureDesc rootDesc = {};
 		rootDesc.mStaticSamplerCount = 1;
 		rootDesc.ppStaticSamplerNames = pStaticSamplers;
 		rootDesc.ppStaticSamplers = &pSamplerPointWrap;
-		rootDesc.mShaderCount = 1;
-		rootDesc.ppShaders = &pShaderWave;
-		addRootSignature(pRenderer, &rootDesc, &pRootSignatureWave);
+		rootDesc.mShaderCount = 2;
+		rootDesc.ppShaders = pShaders;
+		addRootSignature(pRenderer, &rootDesc, &pRootSignature);
 
-		rootDesc.ppShaders = &pShaderMagnify;
-		addRootSignature(pRenderer, &rootDesc, &pRootSignatureMagnify);
-
-		DescriptorBinderDesc descriptorBinderDesc[2] = { { pRootSignatureWave }, { pRootSignatureMagnify } };
-		addDescriptorBinder(pRenderer, 0, 2, descriptorBinderDesc, &pDescriptorBinder);
-
-		RasterizerStateDesc rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRasterizerCullNone);
-
-		DepthStateDesc depthStateDesc = {};
-		addDepthState(pRenderer, &depthStateDesc, &pDepthNone);
-
-		struct Vertex
-		{
-			float3 position;
-			float4 color;
-		};
-
-		struct Vertex2
-		{
-			float3 position;
-			float2 uv;
-		};
+		DescriptorSetDesc setDesc = { pRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetTexture);
+		setDesc = { pRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetUniforms);
 
 		// Define the geometry for a triangle.
 		Vertex triangleVertices[] = { { { 0.0f, 0.5f, 0.0f }, { 0.8f, 0.8f, 0.0f, 1.0f } },
@@ -256,11 +250,10 @@ class WaveIntrinsics: public IApp
 		BufferLoadDesc triangleColorDesc = {};
 		triangleColorDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		triangleColorDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		triangleColorDesc.mDesc.mVertexStride = sizeof(Vertex);
 		triangleColorDesc.mDesc.mSize = sizeof(triangleVertices);
 		triangleColorDesc.pData = triangleVertices;
 		triangleColorDesc.ppBuffer = &pVertexBufferTriangle;
-		addResource(&triangleColorDesc);
+		addResource(&triangleColorDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Define the geometry for a rectangle.
 		Vertex2 quadVertices[] = { { { -1.0f, -1.0f, 0.0f }, { 0.0f, 1.0f } }, { { -1.0f, 1.0f, 0.0f }, { 0.0f, 0.0f } },
@@ -272,11 +265,10 @@ class WaveIntrinsics: public IApp
 		BufferLoadDesc quadUVDesc = {};
 		quadUVDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		quadUVDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		quadUVDesc.mDesc.mVertexStride = sizeof(Vertex2);
 		quadUVDesc.mDesc.mSize = sizeof(quadVertices);
 		quadUVDesc.pData = quadVertices;
 		quadUVDesc.ppBuffer = &pVertexBufferQuad;
-		addResource(&quadUVDesc);
+		addResource(&quadUVDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		BufferLoadDesc ubDesc = {};
 		ubDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -287,15 +279,15 @@ class WaveIntrinsics: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubDesc.ppBuffer = &pUniformBuffer[i];
-			addResource(&ubDesc);
+			addResource(&ubDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
-		finishResourceLoading();
+		waitForAllResourceLoads();
 
 		if (!gAppUI.Init(pRenderer))
 			return false;
 
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
+		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
 		GuiDesc guiDesc = {};
 		pGui = gAppUI.AddGuiComponent("Render Modes", &guiDesc);
 
@@ -333,7 +325,36 @@ class WaveIntrinsics: public IApp
 #endif
 		}
 
-		InputSystem::RegisterInputEvent(onInput);
+		if (!initInputSystem(pWindow))
+			return false;
+
+		// App Actions
+		InputActionDesc actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				if (gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition) && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase)
+					pMovePosition = ctx->pPosition;
+				else
+					pMovePosition = NULL;
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::FLOAT_LEFTSTICK, [](InputActionContext* ctx) { pMovePosition = NULL; gMoveDelta = ctx->mFloat2; return true; } };
+		addInputAction(&actionDesc);
+
+		for (uint32_t i = 0; i < gImageCount; ++i)
+		{
+			DescriptorData params[1] = {};
+			params[0].pName = "SceneConstantBuffer";
+			params[0].ppBuffers = &pUniformBuffer[i];
+			updateDescriptorSet(pRenderer, i, pDescriptorSetUniforms, 1, params);
+		}
 
 		return true;
 	}
@@ -341,6 +362,8 @@ class WaveIntrinsics: public IApp
 	void Exit()
 	{
 		waitQueueIdle(pGraphicsQueue);
+
+		exitInputSystem();
 
 		gAppUI.Exit();
 
@@ -351,15 +374,13 @@ class WaveIntrinsics: public IApp
 		removeResource(pVertexBufferQuad);
 		removeResource(pVertexBufferTriangle);
 
+		removeDescriptorSet(pRenderer, pDescriptorSetUniforms);
+		removeDescriptorSet(pRenderer, pDescriptorSetTexture);
+
 		removeSampler(pRenderer, pSamplerPointWrap);
 		removeShader(pRenderer, pShaderMagnify);
-		removeRootSignature(pRenderer, pRootSignatureMagnify);
 		removeShader(pRenderer, pShaderWave);
-		removeRootSignature(pRenderer, pRootSignatureWave);
-		removeDescriptorBinder(pRenderer, pDescriptorBinder);
-
-		removeDepthState(pDepthNone);
-		removeRasterizerState(pRasterizerCullNone);
+		removeRootSignature(pRenderer, pRootSignature);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -368,11 +389,11 @@ class WaveIntrinsics: public IApp
 		}
 		removeSemaphore(pRenderer, pImageAcquiredSemaphore);
 
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
 
-		removeResourceLoaderInterface(pRenderer);
-		removeQueue(pGraphicsQueue);
+		exitResourceLoaderInterface(pRenderer);
+		removeQueue(pRenderer, pGraphicsQueue);
 		removeRenderer(pRenderer);
 	}
 
@@ -384,52 +405,60 @@ class WaveIntrinsics: public IApp
 		if (!addIntermediateRenderTarget())
 			return false;
 
-		if (!gAppUI.Load(pSwapChain->ppSwapchainRenderTargets))
+		if (!gAppUI.Load(pSwapChain->ppRenderTargets))
 			return false;
 
 		//layout and pipeline for sphere draw
 		VertexLayout vertexLayout = {};
 		vertexLayout.mAttribCount = 2;
 		vertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		vertexLayout.mAttribs[0].mFormat = ImageFormat::RGB32F;
+		vertexLayout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
 		vertexLayout.mAttribs[0].mBinding = 0;
 		vertexLayout.mAttribs[0].mLocation = 0;
 		vertexLayout.mAttribs[0].mOffset = 0;
 		vertexLayout.mAttribs[1].mSemantic = SEMANTIC_COLOR;
-		vertexLayout.mAttribs[1].mFormat = ImageFormat::RGBA32F;
+		vertexLayout.mAttribs[1].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		vertexLayout.mAttribs[1].mBinding = 0;
 		vertexLayout.mAttribs[1].mLocation = 1;
 		vertexLayout.mAttribs[1].mOffset = 3 * sizeof(float);
+
+		RasterizerStateDesc rasterizerStateDesc = {};
+		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
+
+		DepthStateDesc depthStateDesc = {};
 
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_GRAPHICS;
 		GraphicsPipelineDesc& pipelineSettings = desc.mGraphicsDesc;
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthNone;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.pRootSignature = pRootSignatureWave;
+		pipelineSettings.pDepthState = &depthStateDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.pRootSignature = pRootSignature;
 		pipelineSettings.pShaderProgram = pShaderWave;
 		pipelineSettings.pVertexLayout = &vertexLayout;
-		pipelineSettings.pRasterizerState = pRasterizerCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pPipelineWave);
 
 		//layout and pipeline for skybox draw
 		vertexLayout.mAttribs[1].mSemantic = SEMANTIC_TEXCOORD0;
-		vertexLayout.mAttribs[1].mFormat = ImageFormat::RG32F;
+		vertexLayout.mAttribs[1].mFormat = TinyImageFormat_R32G32_SFLOAT;
 		vertexLayout.mAttribs[1].mBinding = 0;
 		vertexLayout.mAttribs[1].mLocation = 1;
 		vertexLayout.mAttribs[1].mOffset = 3 * sizeof(float);
 
-		pipelineSettings.pRootSignature = pRootSignatureMagnify;
 		pipelineSettings.pShaderProgram = pShaderMagnify;
 		addPipeline(pRenderer, &desc, &pPipelineMagnify);
 
 		gSceneData.mousePosition.x = mSettings.mWidth * 0.5f;
 		gSceneData.mousePosition.y = mSettings.mHeight * 0.5f;
+
+		DescriptorData magnifyParams[1] = {};
+		magnifyParams[0].pName = "g_texture";
+		magnifyParams[0].ppTextures = &pRenderTargetIntermediate->pTexture;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetTexture, 1, magnifyParams);
 
 		return true;
 	}
@@ -449,6 +478,8 @@ class WaveIntrinsics: public IApp
 
 	void Update(float deltaTime)
 	{
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
+
 		gAppUI.Update(deltaTime);
 		/************************************************************************/
 		// Uniforms
@@ -462,8 +493,12 @@ class WaveIntrinsics: public IApp
 		gSceneData.time = currentTime;
 		gSceneData.resolution.x = (float)(mSettings.mWidth);
 		gSceneData.resolution.y = (float)(mSettings.mHeight);
-
 		gSceneData.renderMode = (gRenderModeToggles + 1);
+
+		if (pMovePosition)
+			gSceneData.mousePosition = *pMovePosition;
+
+		gSceneData.mousePosition += float2(gMoveDelta.x, -gMoveDelta.y);
 	}
 
 	void Draw()
@@ -480,11 +515,13 @@ class WaveIntrinsics: public IApp
 		/************************************************************************/
 		// Scene Update
 		/************************************************************************/
-		BufferUpdateDesc viewProjCbv = { pUniformBuffer[gFrameIndex], &gSceneData };
-		updateResource(&viewProjCbv);
+		BufferUpdateDesc viewProjCbv = { pUniformBuffer[gFrameIndex] };
+		beginUpdateResource(&viewProjCbv);
+		*(SceneConstantBuffer*)viewProjCbv.pMappedData = gSceneData;
+		endUpdateResource(&viewProjCbv, NULL);
 
 		RenderTarget* pRenderTarget = pRenderTargetIntermediate;
-		RenderTarget* pScreenRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
+		RenderTarget* pScreenRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 
 		Semaphore* pRenderCompleteSemaphore = pRenderCompleteSemaphores[gFrameIndex];
 		Fence*     pRenderCompleteFence = pRenderCompleteFences[gFrameIndex];
@@ -492,51 +529,46 @@ class WaveIntrinsics: public IApp
 		// simply record the screen cleaning command
 		LoadActionsDesc loadActions = {};
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
-		loadActions.mClearColorValues[0] = pRenderTarget->mDesc.mClearValue;
+		loadActions.mClearColorValues[0] = pRenderTarget->mClearValue;
 
 		Cmd* cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);
 
-		TextureBarrier rtBarrier[] = {
-			{ pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
-			{ pScreenRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
+		RenderTargetBarrier rtBarrier[] = {
+			{ pRenderTarget, RESOURCE_STATE_RENDER_TARGET },
+			{ pScreenRenderTarget, RESOURCE_STATE_RENDER_TARGET },
 		};
-		cmdResourceBarrier(cmd, 0, NULL, 2, rtBarrier, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 2, rtBarrier);
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 		// wave debug
+		const uint32_t triangleStride = sizeof(Vertex);
 		cmdBeginDebugMarker(cmd, 0, 0, 1, "Wave Shader");
 		cmdBindPipeline(cmd, pPipelineWave);
-		DescriptorData params[1] = {};
-		params[0].pName = "SceneConstantBuffer";
-		params[0].ppBuffers = &pUniformBuffer[gFrameIndex];
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureWave, 1, params);
-		cmdBindVertexBuffer(cmd, 1, &pVertexBufferTriangle, NULL);
+        cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
+		cmdBindVertexBuffer(cmd, 1, &pVertexBufferTriangle, &triangleStride, NULL);
 		cmdDraw(cmd, 3, 0);
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 		cmdEndDebugMarker(cmd);
 
 		// magnify
 		cmdBeginDebugMarker(cmd, 1, 0, 1, "Magnify");
-		TextureBarrier srvBarrier[] = {
-			{ pRenderTarget->pTexture, RESOURCE_STATE_SHADER_RESOURCE },
+		RenderTargetBarrier srvBarrier[] = {
+			{ pRenderTarget, RESOURCE_STATE_SHADER_RESOURCE },
 		};
-		cmdResourceBarrier(cmd, 0, NULL, 1, srvBarrier, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, srvBarrier);
 
-		loadActions.mClearColorValues[0] = pScreenRenderTarget->mDesc.mClearValue;
+		loadActions.mClearColorValues[0] = pScreenRenderTarget->mClearValue;
 		cmdBindRenderTargets(cmd, 1, &pScreenRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
 
-		DescriptorData magnifyParams[2] = {};
-		magnifyParams[0].pName = "SceneConstantBuffer";
-		magnifyParams[0].ppBuffers = &pUniformBuffer[gFrameIndex];
-		magnifyParams[1].pName = "g_texture";
-		magnifyParams[1].ppTextures = &pRenderTarget->pTexture;
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureMagnify, 2, magnifyParams);
+		const uint32_t quadStride = sizeof(Vertex2);
 		cmdBindPipeline(cmd, pPipelineMagnify);
-		cmdBindVertexBuffer(cmd, 1, &pVertexBufferQuad, NULL);
+        cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetTexture);
+		cmdBindVertexBuffer(cmd, 1, &pVertexBufferQuad, &quadStride, NULL);
 		cmdDrawInstanced(cmd, 6, 0, 2, 0);
 
 		cmdEndDebugMarker(cmd);
@@ -553,12 +585,26 @@ class WaveIntrinsics: public IApp
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 		cmdEndDebugMarker(cmd);
 
-		TextureBarrier presentBarrier = { pScreenRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &presentBarrier, true);
+		RenderTargetBarrier presentBarrier = { pScreenRenderTarget, RESOURCE_STATE_PRESENT };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, &presentBarrier);
 		endCmd(cmd);
 
-		queueSubmit(pGraphicsQueue, 1, &cmd, pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1, &pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = &cmd;
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 	}
 
 	const char* GetName() { return "14_WaveIntrinsics"; }
@@ -572,7 +618,6 @@ class WaveIntrinsics: public IApp
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
 		swapChainDesc.mEnableVsync = false;
 		::addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);
@@ -595,40 +640,6 @@ class WaveIntrinsics: public IApp
 		addRenderTarget(pRenderer, &depthRT, &pRenderTargetIntermediate);
 
 		return pRenderTargetIntermediate != NULL;
-	}
-
-	static bool onInput(const ButtonData* pData)
-	{
-		
-#ifdef _DURANGO
-		if(pData->mUserId == KEY_RIGHT_STICK)
-		{
-			gSceneData.mousePosition.x += pData->mValue[0];
-			gSceneData.mousePosition.y += pData->mValue[1];
-
-			return true;
-		}
-#else
-		if (InputSystem::IsMouseCaptured())
-		{
-			if (pData->mUserId == KEY_UI_MOVE)
-			{
-				if (InputSystem::GetBoolInput(KEY_CONFIRM_PRESSED))
-				{
-					gSceneData.mousePosition.x = pData->mValue[0];
-					gSceneData.mousePosition.y = pData->mValue[1];
-
-					return true;
-				}
-
-			}
-		}
-
-#endif
-
-		
-
-		return false;
 	}
 };
 

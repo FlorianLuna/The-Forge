@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,9 +28,9 @@ layout (location = 0) in vec4 UV;
 
 layout(location = 0) out vec4 FinalColor;
 
-layout(set = 0, binding = 0) uniform sampler PointSampler;
-layout(set = 0, binding = 1) uniform texture2D AccumulationTexture;
-layout(set = 0, binding = 2) uniform texture2D RevealageTexture;
+layout(UPDATE_FREQ_NONE, binding = 0) uniform sampler PointSampler;
+layout(UPDATE_FREQ_NONE, binding = 1) uniform texture2D AccumulationTexture;
+layout(UPDATE_FREQ_NONE, binding = 2) uniform texture2D RevealageTexture;
 
 float MaxComponent(vec4 v)
 {

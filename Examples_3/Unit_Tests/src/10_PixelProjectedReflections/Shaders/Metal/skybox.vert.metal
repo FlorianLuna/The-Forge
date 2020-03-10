@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -40,12 +40,17 @@ struct VSOutput {
     float3 WorldPos;
 };
 
+struct VSDataPerFrame {
+    constant UniformData& uniformBlock    [[id(0)]];
+};
+
 vertex VSOutput stageMain(VSInput In                            [[stage_in]],
-                          constant UniformData& uniformBlock    [[buffer(1)]])
+                          constant VSDataPerFrame& vsData       [[buffer(UPDATE_FREQ_PER_FRAME)]]
+)
 {
     VSOutput result;
 
-    float4 p = uniformBlock.projView * In.Position;
+    float4 p = vsData.uniformBlock.projView * In.Position;
     result.Position = p.xyww;
     result.WorldPos = In.Position.xyz;
     return result;

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,13 +28,13 @@ layout(location = 0) in vec4 UV;
 
 layout(location = 0) out vec4 FragColor;
 
-layout(set = 0, binding = 0) uniform sampler PointSampler;
-layout(set = 0, binding = 1) uniform sampler LinearSampler;
-layout(set = 0, binding = 2) uniform texture2D AccumulationTexture;
-layout(set = 0, binding = 3) uniform texture2D ModulationTexture;
-layout(set = 0, binding = 4) uniform texture2D BackgroundTexture;
+layout(UPDATE_FREQ_NONE, binding = 0) uniform sampler PointSampler;
+layout(UPDATE_FREQ_NONE, binding = 1) uniform sampler LinearSampler;
+layout(UPDATE_FREQ_NONE, binding = 2) uniform texture2D AccumulationTexture;
+layout(UPDATE_FREQ_NONE, binding = 3) uniform texture2D ModulationTexture;
+layout(UPDATE_FREQ_NONE, binding = 4) uniform texture2D BackgroundTexture;
 #if PT_USE_REFRACTION != 0
-layout(set = 0, binding = 5) uniform texture2D RefractionTexture;
+layout(UPDATE_FREQ_NONE, binding = 5) uniform texture2D RefractionTexture;
 #endif
 
 float MaxComponent(vec3 v)

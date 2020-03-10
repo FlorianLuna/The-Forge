@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -34,7 +34,7 @@ struct Compute_Shader
 {
 
     const float Pi = 3.141593;
-    float SampleDelta = 0.025000;
+    float SampleDelta = SAMPLE_DELTA;
 
     texturecube<float> srcTexture;
 
@@ -125,14 +125,30 @@ struct Compute_Shader
                                             skyboxSampler(skyboxSampler) {}
 };
 
+struct CSData {
+    texturecube<float> srcTexture                         [[id(0)]];
+#ifndef TARGET_IOS
+    texture2d_array<float, access::read_write> dstTexture;
+#endif
+    sampler skyboxSampler;
+};
+
 //[numthreads(16, 16, 1)]
-kernel void stageMain(uint3 DTid[[thread_position_in_grid]],
-                      texturecube<float> srcTexture[[texture(1)]],
-                      texture2d_array<float, access::read_write> dstTexture[[texture(3)]],
-                      sampler skyboxSampler[[sampler(4)]])
+kernel void stageMain(uint3 DTid                            [[thread_position_in_grid]],
+                      constant CSData& csData               [[buffer(UPDATE_FREQ_NONE)]]
+#ifdef TARGET_IOS
+					  , texture2d_array<float, access::read_write> dstTexture [[texture(0)]]
+#endif
+)
 {
     uint3 DTid0;
     DTid0 = DTid;
-    Compute_Shader main(srcTexture, dstTexture, skyboxSampler);
+    Compute_Shader main(csData.srcTexture,
+#ifndef TARGET_IOS
+						csData.dstTexture,
+#else
+						dstTexture,
+#endif
+						csData.skyboxSampler);
     return main.main(DTid0);
 }

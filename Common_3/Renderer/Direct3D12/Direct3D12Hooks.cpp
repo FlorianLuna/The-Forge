@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -34,15 +34,21 @@ static void enable_debug_layer_hook(Renderer* pRenderer)
 	ID3D12Debug1* pDebug1 = NULL;
 	if (S_OK == pRenderer->pDXDebug->QueryInterface(IID_PPV_ARGS(&pDebug1)))
 	{
-		pDebug1->SetEnableGPUBasedValidation(pRenderer->mSettings.mEnableGPUBasedValidation);
+		pDebug1->SetEnableGPUBasedValidation(pRenderer->mEnableGpuBasedValidation);
 		pDebug1->Release();
 	}
 #endif
 }
 
-static ImageFormat::Enum get_recommended_swapchain_format(bool hintHDR) { return ImageFormat::BGRA8; }
+static TinyImageFormat get_recommended_swapchain_format(bool hintHDR)
+{
+	return TinyImageFormat_B8G8R8A8_UNORM;
+}
 
-static uint32_t get_swap_chain_image_index(SwapChain* pSwapChain) { return pSwapChain->pDxSwapChain->GetCurrentBackBufferIndex(); }
+static uint32_t get_swap_chain_image_index(SwapChain* pSwapChain)
+{
+	return pSwapChain->pDxSwapChain->GetCurrentBackBufferIndex();
+}
 
 void initHooks()
 {

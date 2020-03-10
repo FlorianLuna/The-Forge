@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -128,9 +128,14 @@ float2 PaniniProjectionScreenPosition(float2 screenPosition, float fovH, float D
 	return paniniPosition * project * upscale;
 }
 
+struct FSData {
+    texture2d<float, access::sample> uTex   [[id(0)]];
+    sampler uSampler                        [[id(1)]];
+};
+
 fragment float4 stageMain(VSOutput input [[stage_in]],
-                       texture2d<float, access::sample> uTex [[texture(1)]],
-                       sampler uSampler [[sampler(2)]])
+                          constant FSData& fsData [[buffer(UPDATE_FREQ_NONE)]]
+)
 {
-    return uTex.sample(uSampler, input.texcoord);
+    return fsData.uTex.sample(fsData.uSampler, input.texcoord);
 }

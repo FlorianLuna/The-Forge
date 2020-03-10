@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -24,8 +24,8 @@
  * under the License.
 */
 
-layout(set=0, binding=1) uniform textureCube skyboxTex;
-layout(set = 0, binding = 2) uniform sampler skyboxSampler;
+layout(UPDATE_FREQ_NONE, binding=1) uniform textureCube skyboxTex;
+layout(UPDATE_FREQ_NONE, binding = 2) uniform sampler skyboxSampler;
 
 layout(location = 1) in vec3 WorldPos;
 

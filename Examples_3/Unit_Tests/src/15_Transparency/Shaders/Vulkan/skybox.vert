@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -26,7 +26,8 @@
 
 layout(location = 0) in vec4 vs_in_position;
 
-layout (std140, set=0, binding=0) uniform SkyboxUniformBlock{
+layout (std140, UPDATE_FREQ_PER_FRAME, binding=0) uniform SkyboxUniformBlock
+{
 	uniform mat4 vp;
 };
 

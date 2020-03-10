@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -61,48 +61,35 @@ struct PSOutput
     float4 simulation   [[color(3)]];
 };
 
-struct BindlessDiffuseData
-{
-	array<texture2d<float>,MATERIAL_BUFFER_SIZE> textures;
-};
-
-struct BindlessNormalData
-{
-	array<texture2d<float>,MATERIAL_BUFFER_SIZE> textures;
-};
-
-struct BindlessSpecularData
-{
-	array<texture2d<float>,MATERIAL_BUFFER_SIZE> textures;
+struct Textures {
+    sampler textureFilter;
+    array<texture2d<float>,MATERIAL_BUFFER_SIZE> diffuseMaps;
+    array<texture2d<float>,MATERIAL_BUFFER_SIZE> normalMaps;
+    array<texture2d<float>,MATERIAL_BUFFER_SIZE> specularMaps;
+    constant MeshConstants* meshConstantsBuffer;
 };
 
 // Pixel shader for alpha tested geometry
-fragment PSOutput stageMain(VSOutput input                                     [[stage_in]],
-//                            constant RootConstant& indirectRootConstant        [[buffer(0)]],
-                            constant uint* indirectMaterialBuffer              [[buffer(1)]],
-                            constant MeshConstants* meshConstantsBuffer        [[buffer(2)]],
-                            sampler textureFilter                              [[sampler(0)]],
-                            device BindlessDiffuseData& diffuseMaps            [[buffer(12)]],
-                            device BindlessNormalData& normalMaps              [[buffer(13)]],
-                            device BindlessSpecularData& specularMaps          [[buffer(14)]],
-                            constant uint& drawID                              [[buffer(20)]]
+fragment PSOutput stageMain(
+    VSOutput input                                     [[stage_in]],
+    constant Textures& textures                        [[buffer(UNIT_VBPASS_TEXTURES)]],
+    constant uint* indirectMaterialBuffer              [[buffer(UNIT_INDIRECT_MATERIAL_RW)]],
+    constant uint& drawID                              [[buffer(UINT_VBPASS_DRAWID)]]
 )
 {
 	PSOutput Out;
 
-	uint matBaseSlot = BaseMaterialBuffer(true, 1); //1 is camera view, 0 is shadow map view
+	uint matBaseSlot = BaseMaterialBuffer(true, VIEW_CAMERA); //1 is camera view, 0 is shadow map view
 	uint materialID = indirectMaterialBuffer[matBaseSlot + drawID];
 
-	float4 albedo = diffuseMaps.textures[materialID].sample(textureFilter, input.texCoord);
-
+	float4 albedo = textures.diffuseMaps[materialID].sample(textures.textureFilter, input.texCoord);
 	if(albedo.a < 0.5) discard_fragment();
 	
-	uint twoSided = meshConstantsBuffer[materialID].twoSided;
+	uint twoSided = textures.meshConstantsBuffer[materialID].twoSided;
 	
 	// CALCULATE PIXEL COLOR USING INTERPOLATED ATTRIBUTES
 	// Reconstruct normal map Z from X and Y
-	float4 normalMapRG = normalMaps.textures[materialID].sample(textureFilter, input.texCoord);
-	
+	float4 normalMapRG = textures.normalMaps[materialID].sample(textures.textureFilter, input.texCoord);
 	float3 reconstructedNormalMap;
 	reconstructedNormalMap.xy = normalMapRG.ga * 2 - 1;
 	reconstructedNormalMap.z = sqrt(1 - dot(reconstructedNormalMap.xy, reconstructedNormalMap.xy));
@@ -115,7 +102,7 @@ fragment PSOutput stageMain(VSOutput input                                     [
 	Out.normal = float4((reconstructedNormalMap.x * tangent + reconstructedNormalMap.y * binormal + reconstructedNormalMap.z * normal) * 0.5 + 0.5, 0.0);
 	Out.albedo = albedo;
 	Out.albedo.a = twoSided > 0 ? 1.0f : 0.0f;
-	Out.specular = specularMaps.textures[materialID].sample(textureFilter, input.texCoord);
+	Out.specular = textures.specularMaps[materialID].sample(textures.textureFilter, input.texCoord);
 	Out.simulation = 0.0f;
 	
 	return Out;

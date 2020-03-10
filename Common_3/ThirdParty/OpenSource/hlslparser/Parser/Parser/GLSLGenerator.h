@@ -12,13 +12,9 @@
 
 #include "CodeWriter.h"
 #include "HLSLTree.h"
+#include "Parser.h"
 
-
-struct GLSLPreprocessorPackage
-{
-	char	m_storedPreprocessors[256];
-	int		m_line = -100;
-};
+class StringLibrary;
 
 class GLSLGenerator
 {
@@ -56,6 +52,7 @@ public:
     {
         unsigned int flags;
         const char* constantBufferPrefix;
+		eastl::vector < BindingShift >shiftVec;
 
         Options()
         {
@@ -66,7 +63,7 @@ public:
 
     GLSLGenerator();
     
-    bool Generate(HLSLTree* tree, Target target, Version versiom, const char* entryName, const Options& options = Options());
+    bool Generate(StringLibrary * stringLibrary, HLSLTree* tree, Target target, Version versiom, const char* entryName, const Options& options = Options());
     const char* GetResult() const;
 
 private:
@@ -78,14 +75,14 @@ private:
 		AttributeModifier_Inout,
     };
 
-    void OutputExpressionList(HLSLExpression* expression, HLSLArgument* argument = NULL);
-    void OutputExpression(HLSLExpression* expression, const HLSLType* dstType = NULL);
-
+	void OutputExpressionList(const eastl::vector<HLSLExpression*>& expressions, size_t i = 0);
+	void OutputExpression(HLSLExpression* expression, const HLSLType* dstType = NULL, bool allowCast = true);
 	void OutputExpressionForBufferArray(HLSLExpression* expression, const HLSLType* dstType = NULL);
 
-    void OutputIdentifier(const char* name);
-    void OutputArguments(HLSLArgument* argument);
-    
+	void OutputIdentifier(const CachedString & name);
+	void OutputIdentifierExpression(HLSLIdentifierExpression* pIdentExpr);
+	void OutputArguments(const eastl::vector < HLSLArgument* > & arguments);
+
 
 	void OutputAttributes(int indent, HLSLAttribute* attribute);
     /**
@@ -94,16 +91,16 @@ private:
      */
     void OutputStatements(int indent, HLSLStatement* statement, const HLSLType* returnType = NULL);
 
-    void OutputAttribute(const HLSLType& type, const char* semantic, AttributeModifier modifier, int *counter);
+    void OutputAttribute(const HLSLType& type, const CachedString & semantic, AttributeModifier modifier, int *counter);
     void OutputAttributes(HLSLFunction* entryFunction);
     void OutputEntryCaller(HLSLFunction* entryFunction);
     void OutputDeclaration(HLSLDeclaration* declaration);
 	void OutputDeclarationType( const HLSLType& type );
-	void OutputDeclarationBody( const HLSLType& type, const char* name );
-    void OutputDeclaration(const HLSLType& type, const char* name);
+	void OutputDeclarationBody( const HLSLType& type, const CachedString & name);
+    void OutputDeclaration(const HLSLType& type, const CachedString & name);
     void OutputCast(const HLSLType& type);
 
-    void OutputSetOutAttribute(const char* semantic, const char* resultName);
+    void OutputSetOutAttribute(const char* semantic, const CachedString & resultName);
 
     void LayoutBuffer(HLSLBuffer* buffer, unsigned int& offset);
     void LayoutBuffer(const HLSLType& type, unsigned int& offset);
@@ -114,212 +111,87 @@ private:
     void OutputBufferAccessExpression(HLSLBuffer* buffer, HLSLExpression* expression, const HLSLType& type, unsigned int postOffset);
     unsigned int OutputBufferAccessIndex(HLSLExpression* expression, unsigned int postOffset);
 
+	void OutputArrayExpression(int arrayDimension, HLSLExpression* (&arrayDimExpression)[MAX_DIM]);
+
     void OutputBuffer(int indent, HLSLBuffer* buffer);
 
-	void OutPushConstantIdentifierTextureStateExpression(int size, int counter, const HLSLTextureStateExpression* pTextureStateExpression, bool* bWritten);
-	//void OutPushConstantIdentifierRWTextureStateExpression(int size, int counter, const HLSLRWTextureStateExpression* prwTextureStateExpression, bool* bWritten);
-
-    HLSLFunction* FindFunction(HLSLRoot* root, const char* name);
-    HLSLStruct* FindStruct(HLSLRoot* root, const char* name);
+    HLSLFunction* FindFunction(HLSLRoot* root, const CachedString & name);
+    HLSLStruct* FindStruct(HLSLRoot* root, const CachedString & name);
 
     void Error(const char* format, ...);
 
     /** GLSL contains some reserved words that don't exist in HLSL. This function will
      * sanitize those names. */
-    const char* GetSafeIdentifierName(const char* name) const;
+	CachedString GetSafeIdentifierName(const CachedString & name) const;
 
     /** Generates a name of the format "base+n" where n is an integer such that the name
      * isn't used in the syntax tree. */
-    bool ChooseUniqueName(const char* base, char* dst, int dstLength) const;
+	bool ChooseUniqueName(const char* base, CachedString & dstName) const;
 
-    const char* GetBuiltInSemantic(const char* semantic, AttributeModifier modifier, int* outputIndex = 0);
-	const char* GetBuiltInSemantic(const char* semantic, AttributeModifier modifier, const HLSLType& type, int* outputIndex = 0);
-    const char* GetAttribQualifier(AttributeModifier modifier);
+    CachedString GetBuiltInSemantic(const CachedString & semantic, AttributeModifier modifier, int* outputIndex = 0);
+	CachedString GetBuiltInSemantic(const CachedString & semantic, AttributeModifier modifier, const HLSLType& type, int* outputIndex = 0);
+	CachedString GetAttribQualifier(AttributeModifier modifier);
 
-	void GetRegisterNumbering(const char* registerName, char* dst);
-	int GetLayoutSetNumbering(const char* registerSpaceName);
-
-	void PrintPreprocessors(int currentLine);
-
-
-	bool HandleTextureStateBinaryExpression(HLSLExpression* bie, HLSLTextureStateExpression* tse)
-	{
-		HLSLBinaryExpression* binaryExpression = static_cast<HLSLBinaryExpression*>(bie);
-
-		bool result = false;
-
-		//recursive
-		if (binaryExpression->expression1->nodeType == HLSLNodeType_BinaryExpression)
-		{
-			result = HandleTextureStateBinaryExpression(binaryExpression->expression1, tse);
-		}
-
-		if (result)
-			return result;
-
-		if (binaryExpression->expression2->nodeType == HLSLNodeType_BinaryExpression)
-		{
-			result = HandleTextureStateBinaryExpression(binaryExpression->expression2, tse);
-		}
-
-		if (result)
-			return result;
-
-
-		if (binaryExpression->expression1->nodeType == HLSLNodeType_FunctionCall)
-		{
-			HLSLFunctionCall* fc = static_cast<HLSLFunctionCall*>(binaryExpression->expression1);
-			fc->pTextureStateExpression = tse;
-
-			OutputExpression(binaryExpression->expression1);
-		}
-		else if (binaryExpression->expression1->nodeType == HLSLNodeType_MemberAccess)
-		{
-			HLSLMemberAccess* ma = static_cast<HLSLMemberAccess*>(binaryExpression->expression1);
-			HLSLFunctionCall* fc = static_cast<HLSLFunctionCall*>(ma->object);
-			fc->pTextureStateExpression = tse;
-
-			OutputExpression(binaryExpression->expression1);
-		}
-		else if (binaryExpression->expression2->nodeType == HLSLNodeType_FunctionCall)
-		{
-			HLSLFunctionCall* fc = static_cast<HLSLFunctionCall*>(binaryExpression->expression2);
-			fc->pTextureStateExpression = tse;
-
-			OutputExpression(binaryExpression->expression2);
-		}
-		else if (binaryExpression->expression2->nodeType == HLSLNodeType_MemberAccess)
-		{
-			HLSLMemberAccess* ma = static_cast<HLSLMemberAccess*>(binaryExpression->expression2);
-			HLSLFunctionCall* fc = static_cast<HLSLFunctionCall*>(ma->object);
-			fc->pTextureStateExpression = tse;
-
-			OutputExpression(binaryExpression->expression2);
-		}
-		else
-		{
-			//error
-			return false;
-		}
-
-		return true;
-	}
-
-
-	bool IsRWTexture(HLSLBaseType type)
-	{
-		switch (type)
-		{
-			case HLSLBaseType_RWTexture1D:
-			case HLSLBaseType_RWTexture1DArray:
-			case HLSLBaseType_RWTexture2D:
-			case HLSLBaseType_RWTexture2DArray:
-			case HLSLBaseType_RWTexture3D:
-				return true;
-			default:
-				return false;
-		}			
-	}
-
-	bool IsRasterizerOrderedTexture(HLSLBaseType type)
-	{
-		switch (type)
-		{
-		case HLSLBaseType_RasterizerOrderedTexture1D:
-		case HLSLBaseType_RasterizerOrderedTexture1DArray:
-		case HLSLBaseType_RasterizerOrderedTexture2D:
-		case HLSLBaseType_RasterizerOrderedTexture2DArray:
-		case HLSLBaseType_RasterizerOrderedTexture3D:
-			return true;
-		default:
-			return false;
-		}
-	}
-
-	bool IsTexture(HLSLBaseType type)
-	{
-		switch (type)
-		{
-		case HLSLBaseType_Texture1D:
-		case HLSLBaseType_Texture1DArray:
-		case HLSLBaseType_Texture2D:
-		case HLSLBaseType_Texture2DArray:
-		case HLSLBaseType_Texture3D:
-		case HLSLBaseType_Texture2DMS:
-		case HLSLBaseType_Texture2DMSArray:
-		case HLSLBaseType_TextureCube:
-		case HLSLBaseType_TextureCubeArray:
-			return true;
-		default:
-			return false;
-		}
-	}
-
-	
-
+	CachedString MakeCached(const char * str);
 
 private:
-
     static const int    s_numReservedWords = 7;
     static const char*  s_reservedWord[s_numReservedWords];
 
     CodeWriter          m_writer;
 
     HLSLTree*           m_tree;
-    const char*         m_entryName;
+    CachedString         m_entryName;
     Target              m_target;
     Version             m_version;
     bool                m_versionLegacy;
     Options             m_options;
 
     bool                m_outputPosition;
-    int                 m_outputTargets;
+	eastl::vector < HLSLBaseType > m_outputTypes;
 
-	HLSLBaseType		m_outputTypes[64];
+    CachedString        m_outAttribPrefix;
+    CachedString        m_inAttribPrefix;
 
-    const char*         m_outAttribPrefix;
-    const char*         m_inAttribPrefix;
-
-    char                m_matrixRowFunction[64];
-    char                m_matrixCtorFunction[64];
-    char                m_matrixMulFunction[64];
-    char                m_clipFunction[64];
-    char                m_tex2DlodFunction[64];
-    char                m_tex2DbiasFunction[64];
-    char                m_tex2DgradFunction[64];
-    char                m_tex3DlodFunction[64];
-    char                m_texCUBEbiasFunction[64];
-	char                m_texCUBElodFunction[ 64 ];
-    char                m_scalarSwizzle2Function[64];
-    char                m_scalarSwizzle3Function[64];
-    char                m_scalarSwizzle4Function[64];
-    char                m_sinCosFunction[64];
-	char                m_bvecTernary[ 64 ];
-	char				m_f16tof32Function[64];
-	char				m_f32tof16Function[64];
+    CachedString		m_matrixRowFunction;
+    CachedString		m_matrixCtorFunction;
+    CachedString		m_matrixMulFunction;
+    CachedString		m_clipFunction;
+	CachedString		m_tex2DlodFunction;
+	CachedString		m_tex2DbiasFunction;
+    CachedString		m_tex2DgradFunction;
+    CachedString		m_tex3DlodFunction;
+    CachedString		m_texCUBEbiasFunction;
+	CachedString		m_texCUBElodFunction;
+	CachedString		m_textureLodOffsetFunction;
+	CachedString		m_scalarSwizzle2Function;
+    CachedString		m_scalarSwizzle3Function;
+    CachedString		m_scalarSwizzle4Function;
+    CachedString		m_sinCosFunction;
+	CachedString		m_bvecTernary;
+	CachedString		m_f16tof32Function;
+	CachedString		m_f32tof16Function;
+	CachedString		m_getDimensions;
+	CachedString		m_mulMatFunction;
 
     bool                m_error;
 
-    char                m_reservedWord[s_numReservedWords][64];
+	CachedString		m_reservedWord[s_numReservedWords];
 
+	eastl::vector < CachedString> m_StructuredBufferNames;
+	eastl::vector < HLSLBuffer*> m_PushConstantBuffers;
 
-	char				m_StructuredBufferNames[128][64];
-	int					m_StructuredBufferCounter;
+	CachedString		m_outputGeometryType;
 
-	HLSLBuffer*			m_PushConstantBuffers[64];
-	int					m_PushConstantBufferCounter;
+	CachedString		m_domain;
+	CachedString		m_partitioning;
+	CachedString		m_outputtopology;
+	CachedString		m_patchconstantfunc;
 
-	GLSLPreprocessorPackage m_preprocessorPackage[128];
-	char				m_outputGeometryType[16];
+	CachedString		m_geoInputdataType;
+	CachedString		m_geoOutputdataType;
 
-
-	const char*			m_domain;
-	const char*			m_partitioning;
-	const char*			m_outputtopology;
-	const char*			m_patchconstantfunc;
-
-	const char*			m_geoInputdataType;
-	const char*			m_geoOutputdataType;
+	StringLibrary * m_stringLibrary;
 };
 
 

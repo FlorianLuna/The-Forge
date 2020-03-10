@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -29,6 +29,13 @@
 
 // ECS
 #include "../../../../Middleware_3/ECS/EntityManager.h"
+#include "../../../../Middleware_3/ECS/ComponentRepresentation.h"
+
+// REPRESENTATIONS
+#include "../17_EntityComponentSystem/Representations/WorldBoundsRepresentation.h"
+#include "../17_EntityComponentSystem/Representations/PositionRepresentation.h"
+#include "../17_EntityComponentSystem/Representations/SpriteRepresentation.h"
+#include "../17_EntityComponentSystem/Representations/MoveRepresentation.h"
 
 // COMPONENTS
 #include "../17_EntityComponentSystem/Components/WorldBoundsComponent.h"
@@ -45,26 +52,14 @@
 #include "../../../../Middleware_3/UI/AppUI.h"
 #include "../../../../Common_3/Renderer/IRenderer.h"
 #include "../../../../Common_3/OS/Interfaces/IProfiler.h"
-//#include "../../../../Common_3/Renderer/GpuProfiler.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 #include "../../../../Common_3/OS/Core/ThreadSystem.h"
 
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
 
 #include "../../../../Common_3/OS/Interfaces/IMemory.h"    // Must be the last include in a cpp file
-
-// Profilers
-GuiComponent*			pGuiWindow;
-GpuProfiler* pGpuProfiler = NULL;
-HiresTimer   gTimer;
-
-struct VsParams
-{
-	float aspect;
-};
 
 struct SpriteData
 {
@@ -76,8 +71,7 @@ struct SpriteData
 };
 
 const uint32_t gImageCount = 3;
-bool           bToggleMicroProfiler = false;
-bool           bPrevToggleMicroProfiler = false;
+ProfileToken   gGpuProfileToken;
 
 Renderer* pRenderer = NULL;
 
@@ -96,13 +90,9 @@ Buffer*   pSpriteIndexBuffer = NULL;
 Pipeline* pSpritePipeline = NULL;
 
 RootSignature*    pRootSignature = NULL;
-DescriptorBinder* pDescriptorBinder = NULL;
+DescriptorSet*    pDescriptorSetTexture = NULL;
+DescriptorSet*    pDescriptorSetUniforms = NULL;
 Sampler*          pLinearClampSampler = NULL;
-DepthState*       pDepthState = NULL;
-RasterizerState*  pRasterizerStateCullNone = NULL;
-BlendState*       pBlendState = NULL;
-
-Buffer* pParamsUbo[gImageCount] = { NULL };
 
 Texture* pSpriteTexture = NULL;
 
@@ -113,20 +103,6 @@ uint        gDrawSpriteCount = 0;
 
 /// UI
 UIApp gAppUI;
-
-const char* pszBases[FSR_Count] = {
-	"../../../src/17_EntityComponentSystem/",    // FSR_BinShaders
-	"../../../src/17_EntityComponentSystem/",    // FSR_SrcShaders
-	"../../../UnitTestResources/",               // FSR_Textures
-	"../../../UnitTestResources/",               // FSR_Meshes
-	"../../../UnitTestResources/",               // FSR_Builtin_Fonts
-	"../../../src/17_EntityComponentSystem/",    // FSR_GpuConfig
-	"",                                          // FSR_Animation
-	"",                                          // FSR_Audio
-	"../../../src/17_EntityComponentSystem/",    // FSR_OtherFiles - mentioned entities directory
-	"../../../../../Middleware_3/Text/",         // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",           // FSR_MIDDLEWARE_UI
-};
 
 TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00ffff, 18);
 
@@ -146,7 +122,6 @@ static Entity* worldBoundsEntity;
 static Entity* spriteEntities[SpriteEntityCount];
 static Entity* avoidEntities[AvoidCount];
 
-File* pFileSystem			  = nullptr;
 EntityManager* pEntityManager = nullptr;
 
 ThreadSystem* pThreadSystem = nullptr;
@@ -247,17 +222,30 @@ static float DistanceSq(const PositionComponent& a, const PositionComponent& b)
 struct AvoidanceSystem
 {
 	static eastl::vector<float>    avoidDistanceList;
-	eastl::vector<Entity*>		   avoidList;
 
 	Mutex emplaceMutex;
+	
+	bool init()
+	{
+		return emplaceMutex.Init();
+	}
+	
+	void exit()
+	{
+		emplaceMutex.Destroy();
+	}
 
 	void addAvoidThisObjectToSystem(Entity* entity, float distance)
 	{
 		{
 			MutexLock lock(emplaceMutex);
-			avoidList.emplace_back(entity);
 			avoidDistanceList.emplace_back(distance * distance);
 		}
+	}
+
+	static void removeAllObjects()
+	{
+		avoidDistanceList.set_capacity(0);
 	}
 
 	static void resolveCollision(Entity* pEntity, float deltaTime)
@@ -327,8 +315,8 @@ struct AvoidanceSystem
 
 eastl::vector<float>    AvoidanceSystem::avoidDistanceList;
 
-static MoveSystem      moveSystem;
-static AvoidanceSystem avoidanceSystem;
+static MoveSystem*      pMoveSystem;
+static AvoidanceSystem* pAvoidanceSystem;
 
 struct CreationData
 {
@@ -341,7 +329,7 @@ static void createEntities(void* pData, uintptr_t i)
 {
 	// NOT DESERIALIZED WAY TO CREATE ENTITIES
 	//spriteEntities[i] = pEntityManager->createEntity();
-	
+
 	CreationData data = *(CreationData*)pData;
 
 	// DESERIALIZED WAY
@@ -367,7 +355,7 @@ static void createEntities(void* pData, uintptr_t i)
 		sprite = &( pEntityManager->addComponentToEntity<SpriteComponent>(entityId) );
 
 	if (strcmp(data.entityTypeName, "avoid")) {
-		avoidanceSystem.addAvoidThisObjectToSystem((data.entities)[i], 1.3f);
+		pAvoidanceSystem->addAvoidThisObjectToSystem((data.entities)[i], 1.3f);
 		
 		sprite->colorR = 1.0f;
 		sprite->colorG = 1.0f;
@@ -391,8 +379,28 @@ class EntityComponentSystem: public IApp
 	public:
 	bool Init()
 	{
+        // FILE PATHS
+        PathHandle programDirectory = fsCopyProgramDirectoryPath();
+        if (!fsPlatformUsesBundledResources())
+        {
+            PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/17_EntityComponentSystem");
+            fsSetResourceDirectoryRootPath(resourceDirRoot);
+            
+            fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../UnitTestResources/Textures");
+            fsSetRelativePathForResourceDirectory(RD_MESHES,          "../../UnitTestResources/Meshes");
+            fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,    "../../UnitTestResources/Fonts");
+            fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,      "../../UnitTestResources/Animation");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,  "../../../../Middleware_3/Text");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,    "../../../../Middleware_3/UI");
+        }
+        
+
+		SpriteComponentRepresentation::BUILD_VAR_REPRESENTATIONS();
+		MoveComponentRepresentation::BUILD_VAR_REPRESENTATIONS();
+		PositionComponentRepresentation::BUILD_VAR_REPRESENTATIONS();
+		WorldBoundsComponentRepresentation::BUILD_VAR_REPRESENTATIONS();
+
 		pEntityManager = conf_new(EntityManager);
-		pFileSystem	   = conf_new(File);
 
 		// window and renderer setup
 		RendererDesc settings = { 0 };
@@ -402,10 +410,15 @@ class EntityComponentSystem: public IApp
 			return false;
 
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
+		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -416,15 +429,19 @@ class EntityComponentSystem: public IApp
 
 		initResourceLoaderInterface(pRenderer);
 
-		initProfiler(pRenderer);
-		profileRegisterInput();
+		if (!gAppUI.Init(pRenderer))
+		  return false;
 
-		addGpuProfiler(pRenderer, pGraphicsQueue, &pGpuProfiler, "GpuProfiler");
+		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
+
+		initProfiler();
+
+		gGpuProfileToken = addGpuProfiler(pRenderer, pGraphicsQueue, "GpuProfiler");
 
 		// TODO: rename to sprite
 		ShaderLoadDesc spriteShader = {};
-		spriteShader.mStages[0] = { "basic.vert", NULL, 0, FSR_SrcShaders };
-		spriteShader.mStages[1] = { "basic.frag", NULL, 0, FSR_SrcShaders };
+		spriteShader.mStages[0] = { "basic.vert", NULL, 0, RD_SHADER_SOURCES };
+		spriteShader.mStages[1] = { "basic.frag", NULL, 0, RD_SHADER_SOURCES };
 
 		addShader(pRenderer, &spriteShader, &pSpriteShader);
 
@@ -443,27 +460,10 @@ class EntityComponentSystem: public IApp
 		rootDesc.ppStaticSamplers = &pLinearClampSampler;
 		addRootSignature(pRenderer, &rootDesc, &pRootSignature);
 
-		DescriptorBinderDesc descriptorBinderDesc = { pRootSignature };
-		addDescriptorBinder(pRenderer, 0, 1, &descriptorBinderDesc, &pDescriptorBinder);
-
-		RasterizerStateDesc rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRasterizerStateCullNone);
-
-		DepthStateDesc depthStateDesc = {};
-		depthStateDesc.mDepthTest = false;
-		depthStateDesc.mDepthWrite = false;
-		addDepthState(pRenderer, &depthStateDesc, &pDepthState);
-
-		BlendStateDesc blendStateDesc = {};
-		blendStateDesc.mSrcAlphaFactors[0] = BC_SRC_ALPHA;
-		blendStateDesc.mDstAlphaFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
-		blendStateDesc.mSrcFactors[0] = BC_SRC_ALPHA;
-		blendStateDesc.mDstFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
-		blendStateDesc.mMasks[0] = ALL;
-		blendStateDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
-		blendStateDesc.mIndependentBlend = false;
-		addBlendState(pRenderer, &blendStateDesc, &pBlendState);
+		DescriptorSetDesc setDesc = { pRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetTexture);
+		setDesc = { pRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetUniforms);
 
 		gSpriteData = (SpriteData*)conf_malloc(MaxSpriteCount * sizeof(SpriteData));
 
@@ -480,68 +480,41 @@ class EntityComponentSystem: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			spriteVbDesc.ppBuffer = &pSpriteVertexBuffers[i];
-			addResource(&spriteVbDesc);
+			addResource(&spriteVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Index buffer
-		uint16_t indices[] = {
+		uint16_t indices[] =
+		{
 			0, 1, 2, 2, 1, 3,
 		};
 		BufferLoadDesc spriteIBDesc = {};
 		spriteIBDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
 		spriteIBDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		spriteIBDesc.mDesc.mSize = sizeof(indices);
-		spriteIBDesc.mDesc.mIndexType = INDEX_TYPE_UINT16;
 		spriteIBDesc.pData = indices;
 		spriteIBDesc.ppBuffer = &pSpriteIndexBuffer;
-		addResource(&spriteIBDesc);
-
-		// Ubo
-		BufferLoadDesc ubDesc = {};
-		ubDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		ubDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_CPU_TO_GPU;
-		ubDesc.mDesc.mSize = sizeof(VsParams);
-		ubDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
-		ubDesc.pData = NULL;
-		for (uint32_t i = 0; i < gImageCount; ++i)
-		{
-			ubDesc.ppBuffer = &pParamsUbo[i];
-			addResource(&ubDesc);
-		}
+		addResource(&spriteIBDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Sprites texture
+        PathHandle spritesPath = fsCopyPathInResourceDirectory(RD_TEXTURES, "sprites");
 		TextureLoadDesc textureDesc = {};
-		textureDesc.mRoot = FSR_Textures;
 		textureDesc.ppTexture = &pSpriteTexture;
-		textureDesc.pFilename = "sprites";
-		addResource(&textureDesc);
-
-		finishResourceLoading();
+		textureDesc.pFilePath = spritesPath;
+		addResource(&textureDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		initThreadSystem(&pThreadSystem);
-
-		if (!gAppUI.Init(pRenderer))
-			return false;
-
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
 
 	/************************************************************************/
 	// GUI
 	/************************************************************************/
-
-		GuiDesc guiDesc = {};
-		guiDesc.mStartSize = vec2(300.0f, 250.0f);
-		guiDesc.mStartPosition = vec2(0.0f, guiDesc.mStartSize.getY());
-		pGuiWindow = gAppUI.AddGuiComponent(GetName(), &guiDesc);
-
-		pGuiWindow->AddWidget(CheckboxWidget("Toggle Micro Profiler", &bToggleMicroProfiler)); 
 		
 		const TextDrawDesc UIPanelWindowTitleTextDesc = { 0, 0xffff00ff, 16 };
 
 		float   dpiScale = getDpiScale().x;
-		vec2    UIPosition = { mSettings.mWidth * 0.01f, mSettings.mHeight * 0.5f };
-		vec2    UIPanelSize = vec2(650.f, 1000.f) / dpiScale;
-		GuiDesc guiDesc2(UIPosition, UIPanelSize, UIPanelWindowTitleTextDesc);
+		vec2    UIPanelSize = vec2(650.f, 1000.f);
+		GuiDesc guiDesc2({}, UIPanelSize, UIPanelWindowTitleTextDesc);
+		guiDesc2.mStartPosition = vec2(0.0f, mSettings.mHeight / dpiScale - 250.0f * 0.5f);
 		GUIWindow = gAppUI.AddGuiComponent("MultiThread", &guiDesc2);
 		
 		CheckboxWidget Checkbox("Threading", &multiThread);
@@ -549,6 +522,11 @@ class EntityComponentSystem: public IApp
 
 
 		// Create entities
+		pAvoidanceSystem = conf_new(AvoidanceSystem);
+		pAvoidanceSystem->init();
+		
+		pMoveSystem = conf_new(MoveSystem);
+
 		EntityId worldBoundsEntityId = pEntityManager->createEntity();
 		worldBoundsEntity = pEntityManager->getEntityById(worldBoundsEntityId);
 		WorldBoundsComponent* bounds = &(pEntityManager->addComponentToEntity<WorldBoundsComponent>(worldBoundsEntityId));
@@ -586,15 +564,53 @@ class EntityComponentSystem: public IApp
 			}
 		}
 
+		if (!initInputSystem(pWindow))
+			return false;
+
+		// App Actions
+		InputActionDesc actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				bool capture = gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition);
+				setEnableCaptureInput(capture && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase);
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+
+		waitForAllResourceLoads();
+		
+		// Prepare descriptor sets
+		DescriptorData params[1] = {};
+		params[0].pName = "uTexture0";
+		params[0].ppTextures = &pSpriteTexture;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetTexture, 1, params);
+		for (uint32_t i = 0; i < gImageCount; ++i)
+		{
+			params[0].pName = "instanceBuffer";
+			params[0].ppBuffers = &pSpriteVertexBuffers[i];
+			updateDescriptorSet(pRenderer, i, pDescriptorSetUniforms, 1, params);
+		}
+
 		return true;
 	}
 
 	void Exit()
 	{
+		exitInputSystem();
+
 		shutdownThreadSystem(pThreadSystem);
 		
+		pAvoidanceSystem->exit();
+		conf_delete(pAvoidanceSystem);
+		conf_delete(pMoveSystem);
+		
 		conf_delete(pEntityManager);
-		conf_delete(pFileSystem);
 
 		waitQueueIdle(pGraphicsQueue);
 
@@ -605,19 +621,15 @@ class EntityComponentSystem: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			removeResource(pSpriteVertexBuffers[i]);
-			removeResource(pParamsUbo[i]);
 		}
 		removeResource(pSpriteTexture);
 		removeShader(pRenderer, pSpriteShader);
 		removeResource(pSpriteIndexBuffer);
 
+		removeDescriptorSet(pRenderer, pDescriptorSetTexture);
+		removeDescriptorSet(pRenderer, pDescriptorSetUniforms);
 		removeSampler(pRenderer, pLinearClampSampler);
 		removeRootSignature(pRenderer, pRootSignature);
-		removeDescriptorBinder(pRenderer, pDescriptorBinder);
-		
-		removeDepthState(pDepthState);
-		removeRasterizerState(pRasterizerStateCullNone);
-		removeBlendState(pBlendState);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -626,16 +638,22 @@ class EntityComponentSystem: public IApp
 		}
 		removeSemaphore(pRenderer, pImageAcquiredSemaphore);
 
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
 
-		removeGpuProfiler(pRenderer, pGpuProfiler);
-		removeResourceLoaderInterface(pRenderer);
-		removeQueue(pGraphicsQueue);
+		
+        exitResourceLoaderInterface(pRenderer);
+		removeQueue(pRenderer, pGraphicsQueue);
 		removeRenderer(pRenderer);
 
 		conf_free(gSpriteData);
 		gSpriteData = NULL;
+
+		AvoidanceSystem::removeAllObjects();
+		SpriteComponentRepresentation::DESTROY_VAR_REPRESENTATIONS();
+		MoveComponentRepresentation::DESTROY_VAR_REPRESENTATIONS();
+		PositionComponentRepresentation::DESTROY_VAR_REPRESENTATIONS();
+		WorldBoundsComponentRepresentation::DESTROY_VAR_REPRESENTATIONS();
 	}
 
 	bool Load()
@@ -643,10 +661,26 @@ class EntityComponentSystem: public IApp
 		if (!addMainSwapChain())
 			return false;
 
-		if (!gAppUI.Load(pSwapChain->ppSwapchainRenderTargets))
+		if (!gAppUI.Load(pSwapChain->ppRenderTargets))
 			return false;
 
-		loadProfiler(pSwapChain->ppSwapchainRenderTargets[0]);
+		loadProfilerUI(&gAppUI, mSettings.mWidth, mSettings.mHeight);
+
+		RasterizerStateDesc rasterizerStateDesc = {};
+		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
+
+		DepthStateDesc depthStateDesc = {};
+		depthStateDesc.mDepthTest = false;
+		depthStateDesc.mDepthWrite = false;
+
+		BlendStateDesc blendStateDesc = {};
+		blendStateDesc.mSrcAlphaFactors[0] = BC_SRC_ALPHA;
+		blendStateDesc.mDstAlphaFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
+		blendStateDesc.mSrcFactors[0] = BC_SRC_ALPHA;
+		blendStateDesc.mDstFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
+		blendStateDesc.mMasks[0] = ALL;
+		blendStateDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
+		blendStateDesc.mIndependentBlend = false;
 
 		// VertexLayout for sprite drawing.
 		PipelineDesc desc = {};
@@ -654,16 +688,15 @@ class EntityComponentSystem: public IApp
 		GraphicsPipelineDesc& pipelineSettings = desc.mGraphicsDesc;
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthState;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = ImageFormat::NONE;
+		pipelineSettings.pDepthState = &depthStateDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = TinyImageFormat_UNDEFINED;
 		pipelineSettings.pRootSignature = pRootSignature;
 		pipelineSettings.pShaderProgram = pSpriteShader;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
-		pipelineSettings.pBlendState = pBlendState;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
+		pipelineSettings.pBlendState = &blendStateDesc;
 		addPipeline(pRenderer, &desc, &pSpritePipeline);
 
 		return true;
@@ -673,7 +706,7 @@ class EntityComponentSystem: public IApp
 	{
 		waitQueueIdle(pGraphicsQueue);
 
-		unloadProfiler();
+		unloadProfilerUI();
 		gAppUI.Unload();
 
 		removePipeline(pRenderer, pSpritePipeline);
@@ -683,13 +716,15 @@ class EntityComponentSystem: public IApp
 
 	void Update(float deltaTime)
 	{
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
+
 		// Scene Update
 		static float currentTime = 0.0f;
 		currentTime += deltaTime * 1000.0f;
 
 		// update object systems
-		moveSystem.Update(deltaTime * 3.0f);
-		avoidanceSystem.Update(deltaTime * 3.0f);
+		pMoveSystem->Update(deltaTime * 3.0f);
+		pAvoidanceSystem->Update(deltaTime * 3.0f);
 
 		// Iterate all entities with transform and plane component
 		gDrawSpriteCount = 0;
@@ -725,39 +760,24 @@ class EntityComponentSystem: public IApp
 			spriteData.sprite = (float)sprite.spriteIndex;
 		}
 
-		// ProfileSetDisplayMode()
-		// TODO: need to change this better way 
-		if (bToggleMicroProfiler != bPrevToggleMicroProfiler)
-		{
-			Profile& S = *ProfileGet();
-			int nValue = bToggleMicroProfiler ? 1 : 0;
-			nValue = nValue >= 0 && nValue < P_DRAW_SIZE ? nValue : S.nDisplay;
-			S.nDisplay = nValue;
-
-			bPrevToggleMicroProfiler = bToggleMicroProfiler;
-		}
-
 		gAppUI.Update(deltaTime);
 	}
 
 	void Draw()
 	{
-		gTimer.GetUSec(true);
 		acquireNextImage(pRenderer, pSwapChain, pImageAcquiredSemaphore, NULL, &gFrameIndex);
 
 		// Update uniform buffers.
 		const float w = (float)mSettings.mWidth;
 		const float h = (float)mSettings.mHeight;
-		VsParams    vs_params;
-		vs_params.aspect = w / h;
-		BufferUpdateDesc uboUpdateDesc = { pParamsUbo[gFrameIndex], &vs_params };
-		updateResource(&uboUpdateDesc);
+		float aspect = w / h;
 
 		// Update vertex buffer
-		assert(gDrawSpriteCount >= 0 && gDrawSpriteCount <= MaxSpriteCount);
-		BufferUpdateDesc vboUpdateDesc = { pSpriteVertexBuffers[gFrameIndex], gSpriteData };
-		vboUpdateDesc.mSize = gDrawSpriteCount * sizeof(SpriteData);
-		updateResource(&vboUpdateDesc);
+		ASSERT(gDrawSpriteCount >= 0 && gDrawSpriteCount <= MaxSpriteCount);
+		BufferUpdateDesc vboUpdateDesc = { pSpriteVertexBuffers[gFrameIndex] };
+		beginUpdateResource(&vboUpdateDesc);
+		memcpy(vboUpdateDesc.pMappedData, gSpriteData, gDrawSpriteCount * sizeof(SpriteData));
+		endUpdateResource(&vboUpdateDesc, NULL);
 
 		// Stall if CPU is running "Swap Chain Buffer Count" frames ahead of GPU
 		Fence*      pNextFence = pRenderCompleteFences[gFrameIndex];
@@ -768,7 +788,7 @@ class EntityComponentSystem: public IApp
 			waitForFences(pRenderer, 1, &pNextFence);
 		}
 
-		RenderTarget* pRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
+		RenderTarget* pRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 
 		Semaphore* pRenderCompleteSemaphore = pRenderCompleteSemaphores[gFrameIndex];
 		Fence*     pRenderCompleteFence = pRenderCompleteFences[gFrameIndex];
@@ -783,34 +803,26 @@ class EntityComponentSystem: public IApp
 
 		Cmd* cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);
-		cmdBeginGpuFrameProfile(cmd, pGpuProfiler);
+		cmdBeginGpuFrameProfile(cmd, gGpuProfileToken);
 
-		TextureBarrier barriers[] = {
-			{ pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
+		RenderTargetBarrier barriers[] = {
+			{ pRenderTarget, RESOURCE_STATE_RENDER_TARGET },
 		};
-		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 		// Draw Sprites
 		if (gDrawSpriteCount > 0)
 		{
 			cmdBeginDebugMarker(cmd, 1, 0, 1, "Draw Sprites");
 			cmdBindPipeline(cmd, pSpritePipeline);
-
-#define NUM_BUFFERS 3
-			DescriptorData params[NUM_BUFFERS] = {};
-			params[0].pName = "VsParams";
-			params[0].ppBuffers = &pParamsUbo[gFrameIndex];
-			params[1].pName = "uTexture0";
-			params[1].ppTextures = &pSpriteTexture;
-			params[2].pName = "instanceBuffer";
-			params[2].ppBuffers = &pSpriteVertexBuffers[gFrameIndex];
-
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignature, NUM_BUFFERS, params);
-			cmdBindIndexBuffer(cmd, pSpriteIndexBuffer, 0);
+			cmdBindPushConstants(cmd, pRootSignature, "RootConstant", &aspect);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetTexture);
+			cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
+			cmdBindIndexBuffer(cmd, pSpriteIndexBuffer, INDEX_TYPE_UINT16, 0);
 			cmdDrawIndexedInstanced(cmd, 6, 0, gDrawSpriteCount, 0, 0);
 			cmdEndDebugMarker(cmd);
 		}
@@ -823,29 +835,38 @@ class EntityComponentSystem: public IApp
 		uiTextDesc.mFontColor = 0xff00cc00;
 		uiTextDesc.mFontSize = 18;
 		 
-		gAppUI.DrawText(
-			cmd, float2(8.0f, 15.0f), eastl::string().sprintf("CPU %f ms", gTimer.GetUSecAverage() / 1000.0f).c_str(), &uiTextDesc);
-		
-		gAppUI.DrawText(
-			cmd, float2(8.0f, 40.0f), eastl::string().sprintf("GPU %f ms", (float)pGpuProfiler->mCumulativeTime * 1000.0f).c_str(),
-			&uiTextDesc);
-
-		cmdDrawProfiler(cmd);
-
-		gAppUI.Gui(pGuiWindow);
+        cmdDrawCpuProfile(cmd, float2(8.0f, 15.0f), &gFrameTimeDraw);
+#if !defined(__ANDROID__)		
+        cmdDrawGpuProfile(cmd, float2(8.0f, 40.0f), gGpuProfileToken, &uiTextDesc);
+#endif
+		cmdDrawProfilerUI();
 
         gAppUI.Draw(cmd);
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 		cmdEndDebugMarker(cmd);
 
-		barriers[0] = { pRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, true);
+		barriers[0] = { pRenderTarget, RESOURCE_STATE_PRESENT };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
 
-		cmdEndGpuFrameProfile(cmd, pGpuProfiler);
+		cmdEndGpuFrameProfile(cmd, gGpuProfileToken);
 		endCmd(cmd);
 
-		queueSubmit(pGraphicsQueue, 1, &cmd, pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1, &pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = &cmd;
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 		flipProfiler();
 	}
 
@@ -860,7 +881,6 @@ class EntityComponentSystem: public IApp
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
 		swapChainDesc.mEnableVsync = false;
 		addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);

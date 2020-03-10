@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -24,12 +24,14 @@
  * under the License.
 */
 
-layout (std140, set=0, binding=0) uniform cbCamera {
+layout (std140, UPDATE_FREQ_PER_FRAME, binding=0) uniform cbCamera
+{
 	uniform mat4 projView;
 	uniform vec3 camPos;
 };
 
-layout (std140, set=3, binding=0) uniform cbObject {
+layout (std140, UPDATE_FREQ_PER_DRAW, binding=0) uniform cbObject
+{
 	uniform mat4 worldMat;
 	float roughness;
 	float metalness;
@@ -38,12 +40,14 @@ layout (std140, set=3, binding=0) uniform cbObject {
 
 layout (push_constant) uniform cbTextureRootConstantsData
 {
-	uint albedoMap;
-	uint normalMap;
-	uint metallicMap;
-	uint roughnessMap;
-	uint aoMap;
+	uint textureMapIds;
 } cbTextureRootConstants;
+
+#define albedoMap     ((cbTextureRootConstants.textureMapIds >> 0) & 0xFF)
+#define normalMap     ((cbTextureRootConstants.textureMapIds >> 8) & 0xFF)
+#define metallicMap   ((cbTextureRootConstants.textureMapIds >> 16) & 0xFF)
+#define roughnessMap  ((cbTextureRootConstants.textureMapIds >> 24) & 0xFF)
+#define aoMap         (5)
 
 layout(location = 0) in vec3 normal;
 layout(location = 1) in vec3 pos;
@@ -55,8 +59,8 @@ layout(location = 2) out vec4 outRoughness;
 
 
 // material parameters
-layout(set = 0, binding = 6) uniform texture2D textureMaps[TOTAL_IMGS];
-layout(set = 0, binding = 7) uniform sampler defaultSampler;
+layout(UPDATE_FREQ_NONE, binding = 6) uniform texture2D textureMaps[TOTAL_IMGS];
+layout(UPDATE_FREQ_NONE, binding = 7) uniform sampler defaultSampler;
 
 vec3 reconstructNormal(in vec4 sampleNormal)
 {
@@ -68,7 +72,7 @@ vec3 reconstructNormal(in vec4 sampleNormal)
 
 vec3 getNormalFromMap()
 {
-    vec3 tangentNormal = reconstructNormal(texture(sampler2D(textureMaps[cbTextureRootConstants.normalMap], defaultSampler),uv));
+    vec3 tangentNormal = reconstructNormal(texture(sampler2D(textureMaps[normalMap], defaultSampler),uv));
 
     vec3 Q1  = dFdx(pos);
     vec3 Q2  = dFdy(pos);
@@ -86,7 +90,7 @@ vec3 getNormalFromMap()
 void main()
 {	
 	//cut off
-	float alpha = texture(sampler2D(textureMaps[cbTextureRootConstants.albedoMap], defaultSampler),uv).a;
+	float alpha = texture(sampler2D(textureMaps[albedoMap], defaultSampler),uv).a;
 
 	if(alpha < 0.5)
 		discard;
@@ -105,10 +109,10 @@ void main()
 	if(pbrMaterials!=-1) {
 
 		 N = getNormalFromMap();
-		albedo = pow(texture(sampler2D(textureMaps[cbTextureRootConstants.albedoMap], defaultSampler),uv).rgb,vec3(2.2)) ;
-		_metalness   = texture(sampler2D(textureMaps[cbTextureRootConstants.metallicMap], defaultSampler), uv).r;
-		_roughness = texture(sampler2D(textureMaps[cbTextureRootConstants.roughnessMap], defaultSampler), uv).r;
-		ao = texture(sampler2D(textureMaps[cbTextureRootConstants.aoMap], defaultSampler), uv).r;
+		albedo = pow(texture(sampler2D(textureMaps[albedoMap], defaultSampler),uv).rgb,vec3(2.2)) ;
+		_metalness   = texture(sampler2D(textureMaps[metallicMap], defaultSampler), uv).r;
+		_roughness = texture(sampler2D(textureMaps[roughnessMap], defaultSampler), uv).r;
+		ao = texture(sampler2D(textureMaps[aoMap], defaultSampler), uv).r;
 	} 
 
 	if(pbrMaterials==2) {

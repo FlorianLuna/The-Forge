@@ -4,15 +4,13 @@
 
 #include "../../../../Common_3/OS/Math/MathTypes.h"
 //EA stl
+#include "../../../../Common_3/ThirdParty/OpenSource/EASTL/string.h"
 #include "../../../../Common_3/ThirdParty/OpenSource/EASTL/vector.h"
-#include "../../../../Common_3/Tools/AssimpImporter/AssimpImporter.h"
+#include "../../../../Common_3/ThirdParty/OpenSource/EASTL/unordered_set.h"
+#include "../../../../Common_3/ThirdParty/OpenSource/EASTL/unordered_map.h"
+
 #include "../../../../Common_3/Renderer/IRenderer.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
-
-
-#include "AABBox.h"
-#include "SDFVolumeData.h"
-#include "CPUImage.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 
 namespace eastl
 {
@@ -20,23 +18,34 @@ namespace eastl
 	struct has_equality<vec3> : eastl::false_type {};
 }
 
-
-
-
 //#define NO_HLSL_DEFINITIONS 1
 //#include "Shader_Defs.h"
 #if defined(METAL)
 #include "Shaders/Metal/Shader_Defs.h"
+#include "Shaders/Metal/ASMConstant.h"
+#include "Shaders/Metal/SDF_Constant.h"
 #elif defined(DIRECT3D12) || defined(_DURANGO)
 #define NO_HLSL_DEFINITIONS
 #include "Shaders/D3D12/Shader_Defs.h"
+#include "Shaders/D3D12/ASMShader_Defs.h"
+#include "Shaders/D3D12/SDF_Constant.h"
 #elif defined(VULKAN)
 #define NO_GLSL_DEFINITIONS
 #include "Shaders/Vulkan/Shader_Defs.h"
+#include "Shaders/Vulkan/ASMShader_Defs.h"
+#include "Shaders/Vulkan/SDF_Constant.h"
+#elif defined(ORBIS)
+#define NO_ORBIS_DEFINITIONS
+#include "../../../../PS4/Examples_3/Unit_Tests/src/09_LightShadowPlayground/Shaders/Shader_Defs.h"
+#include "../../../../PS4/Examples_3/Unit_Tests/src/09_LightShadowPlayground/Shaders/ASMShader_Defs.h"
+#include "../../../../PS4/Examples_3/Unit_Tests/src/09_LightShadowPlayground/Shaders/SDF_Constant.h"
 #endif
+
 
 struct Buffer;
 struct ThreadSystem;
+
+struct SDFVolumeData;
 
 typedef struct ClusterCompact
 {
@@ -53,18 +62,6 @@ typedef struct Cluster
 	bool   valid;
 } Cluster;
 
-typedef struct AABoundingBox
-{
-	float4 Center;     // Center of the box.
-	float4 Extents;    // Distance from the center to each side.
-
-	float4 minPt;
-	float4 maxPt;
-
-	float4 corners[8];
-} AABoundingBox;
-
-
 struct FilterBatchData
 {
 	uint meshIndex; // Index into meshConstants
@@ -75,12 +72,10 @@ struct FilterBatchData
 	uint accumDrawIndex;
 	uint _pad0;
 	uint _pad1;
-
 };
 
 struct FilterBatchChunk
 {
-	FilterBatchData*	batches;
 	uint32_t			currentBatchCount;
 	uint32_t			currentDrawCallCount;
 };
@@ -103,59 +98,12 @@ typedef struct SceneVertexPos
 
 } SceneVertexPos;
 
-typedef struct SceneVertexTexCoord
+typedef struct ClusterContainer
 {
-#if defined(METAL) || defined(__linux__)
-	float u, v;    // texture coords
-#else
-	uint32_t texCoord;
-#endif
-} SceneVertexTexCoord;
-
-typedef struct SceneVertexNormal
-{
-#if defined(METAL) || defined(__linux__)
-	float nx, ny, nz;    // normals
-#else
-
-
-
-	uint32_t normal;
-#endif
-} SceneVertexNormal;
-
-typedef struct SceneVertexTangent
-{
-#if defined(METAL) || defined(__linux__)
-	float tx, ty, tz;    // tangents
-#else
-	uint32_t tangent;
-#endif
-} SceneVertexTangent;
-
-typedef struct MeshIn
-{
-#if 0 //defined(METAL)
-	uint32_t startVertex;
-	uint32_t triangleCount;
-#else
-	uint32_t startIndex;
-	uint32_t indexCount;
-#endif
-	uint32_t        vertexCount;
-	float3          minBBox, maxBBox;
 	uint32_t        clusterCount;
 	ClusterCompact* clusterCompacts;
 	Cluster*        clusters;
-	uint32_t        materialId;
-
-	AABoundingBox AABB;
-
-	Buffer* pVertexBuffer;
-	Buffer* pIndexBuffer;
-
-} MeshIn;
-
+} ClusterContainer;
 
 typedef struct Material
 {
@@ -165,43 +113,18 @@ typedef struct Material
 
 typedef struct Scene
 {
-	uint32_t                           numMeshes;
-	uint32_t                           numMaterials;
-	uint32_t                           totalTriangles;
-	uint32_t                           totalVertices;
-	MeshIn*                            meshes;
+	Geometry*                          geom;
 	Material*                          materials;
-	eastl::vector<SceneVertexPos>      positions;
-	eastl::vector<SceneVertexTexCoord> texCoords;
-	eastl::vector<SceneVertexNormal>   normals;
-	eastl::vector<SceneVertexTangent>  tangents;
 	char**                             textures;
 	char**                             normalMaps;
 	char**                             specularMaps;
-
-	eastl::vector<uint32_t> indices;
-
-	Buffer*                   mPVertexBuffer = NULL;
-	Buffer*                   mPIndexBuffer = NULL;
-
-	Buffer* m_pIndirectPosBuffer = NULL;
-	Buffer* m_pIndirectTexCoordBuffer = NULL;
-	Buffer* m_pIndirectNormalBuffer = NULL;
-	Buffer* m_pIndirectTangentBuffer = NULL;
-	Buffer* m_pIndirectIndexBuffer = NULL;
 } Scene;
-
-
-
-
-typedef eastl::vector<eastl::pair<eastl::string, eastl::string> > AlphaTestedMaterialMaps;
-typedef eastl::unordered_map<eastl::string, CPUImage*> AlphaTestedImageMaps;
 
 struct SDFCustomSubMeshData;
 
 struct SDFCustomSubMeshData
 {
-	AssimpImporter::Mesh* m_PSubMesh;
+	struct GLTFMesh* m_PSubMesh;
 	eastl::string mMeshName;
 	bool mIsSDFMesh;
 	bool mIsTwoSided;
@@ -216,7 +139,7 @@ struct SDFCustomSubMeshData
 };
 
 
-struct SDFMeshInstance;
+struct SDFMesh;
 
 struct SDFMeshInstance
 {
@@ -225,13 +148,12 @@ struct SDFMeshInstance
 	uint32_t mStartIndex;
 	uint32_t mStartVertex;
 
-	AABBox mLocalBoundingBox = AABBox(vec3(FLT_MAX), vec3(FLT_MIN));
+	AABB mLocalBoundingBox = AABB(vec3(FLT_MAX), vec3(-FLT_MAX));
 	SDFMesh* mMainMesh = NULL;
 
 	bool mHasGeneratedSDFVolumeData = false;
 
 	bool mIsAlphaTested = false;
-	CPUImage* mTextureImgRef = NULL;
 	eastl::vector<SDFMeshInstance> mStackInstances;
 };
 
@@ -248,11 +170,6 @@ struct SDFMesh
 	eastl::vector<vec3> mUncompressedNormals;
 	eastl::vector<uint32_t> mIndices;
 
-
-	uint32_t mNumMaterials = 0;
-	uint32_t mNumMeshes = 0;
-	uint32_t mTotalVertices = 0;
-	uint32_t mTotalTriangles = 0;
 	eastl::vector<SDFMeshInstance> mMeshInstances;
 	CustomSDFSubMeshDataList mCustomSubMeshDataList;
 
@@ -270,32 +187,39 @@ struct Vertex
 };
 
 
-void destroyClusters(MeshIn* pMesh);
-Scene* loadScene(const char* fileName, float scale, float offsetX, float offsetY, float offsetZ);
+typedef bool (*GenerateVolumeDataFromFileFunc) (SDFVolumeData**, const Path*, const eastl::string&, float);
+
+
+void adjustAABB(AABB* ownerAABB, const vec3& point);
+void adjustAABB(AABB* ownerAABB, const AABB& otherAABB);
+vec3 calculateAABBSize(const AABB* ownerAABB);
+vec3 calculateAABBExtent(const AABB* ownerAABB);
+vec3 calculateAABBCenter(const AABB* ownerAABB);
+
+void alignAABB(AABB* ownerAABB, float alignment);
+
+void destroyClusters(ClusterContainer* pMesh);
+Scene* loadScene(const Path* fileName, struct SyncToken* token, float scale, float offsetX, float offsetY, float offsetZ);
 	
 void   removeScene(Scene* scene);
 
-void   createAABB(const Scene* scene, MeshIn* subMesh);
-void   createClusters(bool twoSided, const Scene* scene, MeshIn* subMesh);
+void   createClusters(bool twoSided, const Scene* scene, IndirectDrawIndexArguments* draw, ClusterContainer* subMesh);
+
+Path* GetSDFBakedFilePath(const eastl::string& fileName);
 
 
-void generateMissingSDF(ThreadSystem* threadSystem, SDFMesh* sdfMesh, BakedSDFVolumeInstances& sdfMeshInstances);
+void loadSDFMeshAlphaTested(ThreadSystem* threadSystem, const Path* filePath, SDFMesh* outMesh, float scale,
+	float offsetX, bool generateSDFVolumeData,
+	BakedSDFVolumeInstances& sdfMeshInstances, 
+	GenerateVolumeDataFromFileFunc generateVolumeDataFromFileFunc);
 
-
-void loadSDFMeshAlphaTested(ThreadSystem* threadSystem, const eastl::string& fileName, SDFMesh* outMesh, float scale,
-	float offsetX, bool generateSDFVolumeData, AlphaTestedImageMaps& alphaTestedImageMaps, AlphaTestedMaterialMaps& alphaTestedMaterialMaps,
-	BakedSDFVolumeInstances& sdfMeshInstances);
-
-void loadSDFMesh(ThreadSystem* threadSystem, const eastl::string& fileName, SDFMesh* outMesh, float scale,
-	float offsetX, bool generateSDFVolumeData, BakedSDFVolumeInstances& sdfMeshInstances);
+void loadSDFMesh(ThreadSystem* threadSystem, const Path* filePath, SDFMesh* outMesh, float scale,
+	float offsetX, bool generateSDFVolumeData, BakedSDFVolumeInstances& sdfMeshInstances,
+	GenerateVolumeDataFromFileFunc generateVolumeDataFromFileFunc);
 
 
 void addClusterToBatchChunk(
 	const ClusterCompact* cluster, uint batchStart, uint accumDrawCount, uint accumNumTriangles, int meshIndex,
-	FilterBatchChunk* batchChunk);
-
-
-void initAlphaTestedImageMaps(AlphaTestedImageMaps& imageMaps);
-void initAlphaTestedMaterialTexturesMaps(AlphaTestedMaterialMaps& alphaTestedMaterialMaps);
+	FilterBatchChunk* batchChunk, FilterBatchData* batches);
 
 #endif

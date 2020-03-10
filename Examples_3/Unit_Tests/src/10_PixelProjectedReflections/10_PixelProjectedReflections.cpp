@@ -1,6 +1,6 @@
 /*
 *
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -25,9 +25,6 @@
 
 // Unit Test for testing materials and pbr.
 
-//assimp
-#include "../../../../Common_3/Tools/AssimpImporter/AssimpImporter.h"
-
 //tiny stl
 #include "../../../../Common_3/ThirdParty/OpenSource/EASTL/vector.h"
 #include "../../../../Common_3/ThirdParty/OpenSource/EASTL/string.h"
@@ -40,9 +37,10 @@
 #include "../../../../Middleware_3/UI/AppUI.h"
 #include "../../../../Common_3/OS/Core/Atomics.h"
 #include "../../../../Common_3/Renderer/IRenderer.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 #include "../../../../Common_3/OS/Interfaces/IApp.h"
 #include "../../../../Common_3/OS/Interfaces/IProfiler.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
 
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
@@ -51,27 +49,9 @@
 #include "../../../../Middleware_3/UI/AppUI.h"
 
 //Input
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
-
 #include "../../../../Common_3/OS/Core/ThreadSystem.h"
 
 #include "../../../../Common_3/OS/Interfaces/IMemory.h"
-
-const char* pszBases[FSR_Count] = {
-	"../../../src/10_PixelProjectedReflections/",    // FSR_BinShaders
-	"../../../src/10_PixelProjectedReflections/",    // FSR_SrcShaders
-	"../../../../../Art/Sponza/",                    // FSR_Textures
-	"../../../../../Art/Sponza/",                    // FSR_Meshes
-	"../../../UnitTestResources/",                   // FSR_Builtin_Fonts
-	"../../../src/10_PixelProjectedReflections/",    // FSR_GpuConfig
-	"",                                              // FSR_Animation
-	"",                                              // FSR_Audio
-	"../../../UnitTestResources/Textures/",          // FSR_OtherFiles
-	"../../../../../Middleware_3/Text/",             // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",               // FSR_MIDDLEWARE_UI
-};
-
 
 #define DEFERRED_RT_COUNT 3
 #define MAX_PLANES 4
@@ -184,6 +164,12 @@ static uint32_t gRenderMode = SCENE_WITH_PPR;
 static uint32_t gPlaneNumber = 1;
 static float    gPlaneSize = 75.0f;
 static float    gRRP_Intensity = 0.2f;
+
+#ifdef TARGET_IOS
+static bool gUseTexturesFallback = false;
+#else
+const bool gUseTexturesFallback = false; // cut off branching for other platforms
+#endif
 
 const char* pMaterialImageFileNames[] = {
 	"SponzaPBR_Textures/ao",
@@ -320,18 +306,8 @@ const char* pMaterialImageFileNames[] = {
 
 };
 
-// PBR Texture values (these values are mirrored on the shaders).
-const uint32_t gBRDFIntegrationSize = 512;
-const uint32_t gSkyboxSize = 1024;
-const uint32_t gSkyboxMips = 11;
-const uint32_t gIrradianceSize = 32;
-const uint32_t gSpecularSize = 128;
-const uint32_t gSpecularMips = 5;
-
 const uint32_t gImageCount = 3;
-bool           bToggleMicroProfiler = false;
-bool           bPrevToggleMicroProfiler = false;
-
+ProfileToken   gGpuProfileToken;
 bool           gToggleVSync = false;
 
 Renderer* pRenderer = NULL;
@@ -340,18 +316,6 @@ UIApp     gAppUI;
 Queue*   pGraphicsQueue = NULL;
 CmdPool* pCmdPool = NULL;
 Cmd**    ppCmds = NULL;
-
-CmdPool* pPreCmdPool = NULL;
-Cmd**    pPrepCmds = NULL;
-
-CmdPool* pBrdfCmdPool = NULL;
-Cmd**    pBrdfCmds = NULL;
-
-CmdPool* pPPR_ProjectionCmdPool = NULL;
-Cmd**    pPPR_ProjectionCmds = NULL;
-
-CmdPool* pPPR_ReflectionCmdPool = NULL;
-Cmd**    pPPR_ReflectionCmds = NULL;
 
 SwapChain* pSwapChain = NULL;
 
@@ -368,31 +332,36 @@ Semaphore*    pRenderCompleteSemaphores[gImageCount] = { NULL };
 Shader*           pShaderBRDF = NULL;
 Pipeline*         pPipelineBRDF = NULL;
 RootSignature*    pRootSigBRDF = NULL;
+DescriptorSet*    pDescriptorSetBRDF[2] = { NULL };
 
 Buffer*           pSkyboxVertexBuffer = NULL;
 Shader*           pSkyboxShader = NULL;
 Pipeline*         pSkyboxPipeline = NULL;
 RootSignature*    pSkyboxRootSignature = NULL;
+DescriptorSet*    pDescriptorSetSkybox[2] = { NULL };
 
 Shader*           pPPR_ProjectionShader = NULL;
 RootSignature*    pPPR_ProjectionRootSignature = NULL;
 Pipeline*         pPPR_ProjectionPipeline = NULL;
+DescriptorSet*    pDescriptorSetPPR_Projection[2] = { NULL };
 
 Shader*           pPPR_ReflectionShader = NULL;
 RootSignature*    pPPR_ReflectionRootSignature = NULL;
 Pipeline*         pPPR_ReflectionPipeline = NULL;
+DescriptorSet*    pDescriptorSetPPR_Reflection[2] = { NULL };
 
 Shader*           pPPR_HolePatchingShader = NULL;
 RootSignature*    pPPR_HolePatchingRootSignature = NULL;
 Pipeline*         pPPR_HolePatchingPipeline = NULL;
+DescriptorSet*    pDescriptorSetPPR__HolePatching[2] = { NULL };
 
-Buffer* pScreenQuadVertexBuffer = NULL;
+Buffer*           pScreenQuadVertexBuffer = NULL;
 
 Shader*           pShaderGbuffers = NULL;
 Pipeline*         pPipelineGbuffers = NULL;
 RootSignature*    pRootSigGbuffers = NULL;
+DescriptorSet*    pDescriptorSetGbuffers[3] = { NULL };
 
-DescriptorBinder* pDescriptorBinder = NULL;
 
 Texture* pSkybox = NULL;
 Texture* pBRDFIntegrationMap = NULL;
@@ -409,11 +378,9 @@ eastl::vector<int> gSponzaTextureIndexforMaterial;
 //For clearing Intermediate Buffer
 eastl::vector<uint32_t> gInitializeVal;
 
-#ifdef TARGET_IOS
 VirtualJoystickUI gVirtualJoystick;
-#endif
 
-UniformObjData pUniformDataMVP;
+UniformObjData gUniformDataMVP;
 
 /************************************************************************/
 // Vertex buffers for the model
@@ -430,42 +397,36 @@ Buffer* pSponzaBuffer;
 Buffer* pLionBuffer;
 
 Buffer*        pBufferUniformCamera[gImageCount] = { NULL };
-UniformCamData pUniformDataCamera;
+UniformCamData gUniformDataCamera;
 
 UniformCamData gUniformDataSky;
 
 Buffer*                pBufferUniformExtendedCamera[gImageCount] = { NULL };
-UniformExtendedCamData pUniformDataExtenedCamera;
+UniformExtendedCamData gUniformDataExtenedCamera;
 
 Buffer* pBufferUniformCameraSky[gImageCount] = { NULL };
 
 Buffer*           pBufferUniformPPRPro[gImageCount] = { NULL };
-UniformPPRProData pUniformPPRProData;
+UniformPPRProData gUniformPPRProData;
 
 Buffer*          pBufferUniformLights = NULL;
-UniformLightData pUniformDataLights;
+UniformLightData gUniformDataLights;
 
 Buffer*                     pBufferUniformDirectionalLights = NULL;
-UniformDirectionalLightData pUniformDataDirectionalLights;
+UniformDirectionalLightData gUniformDataDirectionalLights;
 
 Buffer*              pBufferUniformPlaneInfo[gImageCount] = { NULL };
-UniformPlaneInfoData pUniformDataPlaneInfo;
+UniformPlaneInfoData gUniformDataPlaneInfo;
 
 Shader*   pShaderPostProc = NULL;
 Pipeline* pPipelinePostProc = NULL;
 
-DepthState*      pDepth = NULL;
-RasterizerState* pRasterstateDefault = NULL;
 Sampler*         pSamplerBilinear = NULL;
 Sampler*         pSamplerLinear = NULL;
 
 Sampler* pSamplerNearest = NULL;
 
 uint32_t gFrameIndex = 0;
-
-GpuProfiler* pGpuProfiler = NULL;
-
-BlendState* pBlendStateOneZero = NULL;
 
 eastl::vector<Buffer*> gSphereBuffers;
 
@@ -476,67 +437,52 @@ TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00ffff, 18);
 GuiComponent* pGui = NULL;
 GuiComponent* pLoadingGui = NULL;
 
-ThreadSystem* pIOThreads = NULL;
+SyncToken gResourceSyncStartToken = {};
+SyncToken gResourceSyncToken = {};
 
 const char* pTextureName[] = { "albedoMap", "normalMap", "metallicMap", "roughnessMap", "aoMap" };
 
-static const size_t TextureLoadingProgress = 128;
-static const size_t TextureGPUProgress = 64;
-static const size_t TextureTotalProgress = TextureLoadingProgress + TextureGPUProgress;
-static const size_t ModelLoadingProgress = 1024 * 64;
-static const size_t ModelGPUProgress = 32;
-static const size_t ModelTotalProgress = ModelLoadingProgress + ModelGPUProgress;
-
-struct MeshVertex
+const char* gModelNames[2] = { "Sponza.gltf", "lion.gltf" };
+Geometry*   gModels[2];
+uint32_t gMaterialIds[] =
 {
-	float3 mPos;
-	float3 mNormal;
-	float2 mUv;
+	0, 3, 1, 4, 5, 6, 7, 8, 6, 9, 7, 6, 10, 5, 7, 5, 6,
+	7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7,
+	6, 5, 6, 5, 11, 5, 11, 5, 11, 5, 10, 5, 9, 8, 6, 12,
+	2, 5, 13, 0, 14, 15, 16, 14, 15, 14, 16, 15, 13, 17, 18,
+	19, 18, 19, 18, 17, 19, 18, 17, 20, 21, 20, 21, 20, 21, 20,
+	21, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 3, 1, 22, 23, 4, 23, 4, 5, 24, 5,
 };
 
-struct Mesh
-{
-	Buffer*                   pVertexBuffer = NULL;
-	Buffer*                   pIndexBuffer = NULL;
-	eastl::vector<uint32_t> materialID;
-	struct CmdParam
-	{
-		uint32_t indexCount, startIndex, startVertex;
-	};
-	eastl::vector<CmdParam> cmdArray;
-};
-
-const char* gModelNames[2] = { "sponza.obj", "lion.obj" };
-Mesh        gModels[2];
+VertexLayout gVertexLayoutModel = {};
 
 void transitionRenderTargets()
 {
+#if defined(VULKAN)
 	// Transition render targets to desired state
 	const uint32_t numBarriers = gImageCount + 1;
-	TextureBarrier rtBarriers[numBarriers] = {};
+	RenderTargetBarrier rtBarriers[numBarriers] = {};
 	for (uint32_t i = 0; i < gImageCount; ++i)
-		rtBarriers[i] = { pSwapChain->ppSwapchainRenderTargets[i]->pTexture, RESOURCE_STATE_RENDER_TARGET };
-	rtBarriers[numBarriers - 1] = { pDepthBuffer->pTexture, RESOURCE_STATE_DEPTH_WRITE };
+		rtBarriers[i] = { pSwapChain->ppRenderTargets[i], RESOURCE_STATE_RENDER_TARGET };
+	rtBarriers[numBarriers - 1] = { pDepthBuffer, RESOURCE_STATE_DEPTH_WRITE };
 	beginCmd(ppCmds[0]);
-	cmdResourceBarrier(ppCmds[0], 0, 0, numBarriers, rtBarriers, false);
+	cmdResourceBarrier(ppCmds[0], 0, NULL, 0, NULL, numBarriers, rtBarriers);
 	endCmd(ppCmds[0]);
-	queueSubmit(pGraphicsQueue, 1, &ppCmds[0], pRenderCompleteFences[0], 0, NULL, 0, NULL);
+	QueueSubmitDesc submitDesc = {};
+	submitDesc.mCmdCount = 1;
+	submitDesc.ppCmds = &ppCmds[0];
+	submitDesc.pSignalFence = pRenderCompleteFences[0];
+	submitDesc.mSubmitDone = true;
+	queueSubmit(pGraphicsQueue, &submitDesc);
 	waitForFences(pRenderer, 1, &pRenderCompleteFences[0]);
+#endif
 }
 
 void assignSponzaTextures();
 
-void unloadMesh(Mesh& mesh)
-{
-	if (mesh.pVertexBuffer)
-		removeResource(mesh.pVertexBuffer);
-	if (mesh.pIndexBuffer)
-		removeResource(mesh.pIndexBuffer);
-}
-
 class PixelProjectedReflections: public IApp
 {
-	size_t mPrevProgressBarValue = 0, mProgressBarValue = 0, mProgressBarValueMax = 0;
+	size_t mProgressBarValue = 0, mProgressBarValueMax = 1024;
 	size_t mAtomicProgress = 0;
 
 	public:
@@ -549,7 +495,21 @@ class PixelProjectedReflections: public IApp
 	
 	bool Init()
 	{
-		initThreadSystem(&pIOThreads);
+		// FILE PATHS
+		PathHandle programDirectory = fsCopyProgramDirectoryPath();
+		if (!fsPlatformUsesBundledResources())
+		{
+			PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/10_PixelProjectedReflections");
+			fsSetResourceDirectoryRootPath(resourceDirRoot);
+			
+			fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../../../Art/Sponza/Textures");
+			fsSetRelativePathForResourceDirectory(RD_MESHES,          "../../../../Art/Sponza/Meshes");
+			fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,    "../../UnitTestResources/Fonts");
+			fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,      "../../UnitTestResources/Animation");
+			fsSetRelativePathForResourceDirectory(RD_OTHER_FILES,      "../../UnitTestResources/Textures");
+			fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,  "../../../../Middleware_3/Text");
+			fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,    "../../../../Middleware_3/UI");
+		}
 
 		RendererDesc settings = { 0 };
 		initRenderer(GetName(), &settings, &pRenderer);
@@ -557,25 +517,22 @@ class PixelProjectedReflections: public IApp
 		if (!pRenderer)
 			return false;
 
+#ifdef TARGET_IOS
+		gUseTexturesFallback = (pRenderer->pActiveGpuSettings->mArgumentBufferMaxTextures < TOTAL_IMGS);
+#endif
+		
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
+		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
 
 		// Create command pool and create a cmd buffer for each swapchain image
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
-
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pPreCmdPool);
-		addCmd_n(pPreCmdPool, false, gImageCount, &pPrepCmds);
-
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pBrdfCmdPool);
-		addCmd_n(pBrdfCmdPool, false, gImageCount, &pBrdfCmds);
-
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pPPR_ProjectionCmdPool);
-		addCmd_n(pPPR_ProjectionCmdPool, false, gImageCount, &pPPR_ProjectionCmds);
-
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pPPR_ReflectionCmdPool);
-		addCmd_n(pPPR_ReflectionCmdPool, false, gImageCount, &pPPR_ReflectionCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -587,15 +544,25 @@ class PixelProjectedReflections: public IApp
 
 		initResourceLoaderInterface(pRenderer);
 
-#ifdef TARGET_IOS
-		if (!gVirtualJoystick.Init(pRenderer, "circlepad", FSR_Textures))
+		if (!gVirtualJoystick.Init(pRenderer, "circlepad", RD_TEXTURES))
 			return false;
-#endif
 
-		initProfiler(pRenderer);
-		profileRegisterInput();
+    // Create UI
+    if (!gAppUI.Init(pRenderer))
+      return false;
 
-		addGpuProfiler(pRenderer, pGraphicsQueue, &pGpuProfiler, "GpuProfiler");
+    gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
+
+    GuiDesc guiDesc = {};
+    float   dpiScale = getDpiScale().x;
+    guiDesc.mStartSize = vec2(370.0f / dpiScale, 320.0f / dpiScale);
+    guiDesc.mStartPosition = vec2(0.0f, guiDesc.mStartSize.getY());
+
+    pGui = gAppUI.AddGuiComponent("Pixel-Projected Reflections", &guiDesc);
+
+		initProfiler();
+
+        gGpuProfileToken = addGpuProfiler(pRenderer, pGraphicsQueue, "GpuProfiler");
 		ComputePBRMaps();
 
 		SamplerDesc samplerDesc = { FILTER_LINEAR,       FILTER_LINEAR,       MIPMAP_MODE_LINEAR,
@@ -607,14 +574,20 @@ class PixelProjectedReflections: public IApp
 		addSampler(pRenderer, &nearstSamplerDesc, &pSamplerNearest);
 
 		// GBuffer
-		ShaderMacro    totalImagesShaderMacro = { "TOTAL_IMGS", eastl::string().sprintf("%i", TOTAL_IMGS) };
+		char           totalImagesShaderMacroBuffer[5] = {};
+		sprintf(totalImagesShaderMacroBuffer, "%i", TOTAL_IMGS);
+		ShaderMacro    totalImagesShaderMacro = { "TOTAL_IMGS", totalImagesShaderMacroBuffer };
 		ShaderLoadDesc gBuffersShaderDesc = {};
-		gBuffersShaderDesc.mStages[0] = { "fillGbuffers.vert", NULL, 0, FSR_SrcShaders };
-#ifndef TARGET_IOS
-		gBuffersShaderDesc.mStages[1] = { "fillGbuffers.frag", &totalImagesShaderMacro, 1, FSR_SrcShaders };
-#else
-		gBuffersShaderDesc.mStages[1] = { "fillGbuffers_iOS.frag", NULL, 0, FSR_SrcShaders };
-#endif
+		gBuffersShaderDesc.mStages[0] = { "fillGbuffers.vert", NULL, 0, RD_SHADER_SOURCES };
+		
+		if (!gUseTexturesFallback)
+		{
+			gBuffersShaderDesc.mStages[1] = { "fillGbuffers.frag", &totalImagesShaderMacro, 1, RD_SHADER_SOURCES };
+		}
+		else
+		{
+			gBuffersShaderDesc.mStages[1] = { "fillGbuffers_iOS.frag", NULL, 0, RD_SHADER_SOURCES };
+		}
 		addShader(pRenderer, &gBuffersShaderDesc, &pShaderGbuffers);
 
 		const char* pStaticSamplerNames[] = { "defaultSampler" };
@@ -625,14 +598,15 @@ class PixelProjectedReflections: public IApp
 		gBuffersRootDesc.ppStaticSamplerNames = pStaticSamplerNames;
 		gBuffersRootDesc.ppStaticSamplers = pStaticSamplers;
 
-#ifndef TARGET_IOS
-		gBuffersRootDesc.mMaxBindlessTextures = TOTAL_IMGS;
-#endif
+		if (!gUseTexturesFallback)
+		{
+			gBuffersRootDesc.mMaxBindlessTextures = TOTAL_IMGS;
+		}
 		addRootSignature(pRenderer, &gBuffersRootDesc, &pRootSigGbuffers);
 
 		ShaderLoadDesc skyboxShaderDesc = {};
-		skyboxShaderDesc.mStages[0] = { "skybox.vert", NULL, 0, FSR_SrcShaders };
-		skyboxShaderDesc.mStages[1] = { "skybox.frag", NULL, 0, FSR_SrcShaders };
+		skyboxShaderDesc.mStages[0] = { "skybox.vert", NULL, 0, RD_SHADER_SOURCES };
+		skyboxShaderDesc.mStages[1] = { "skybox.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &skyboxShaderDesc, &pSkyboxShader);
 
 		const char*       pSkyboxamplerName = "skyboxSampler";
@@ -644,8 +618,8 @@ class PixelProjectedReflections: public IApp
 
 		//BRDF
 		ShaderLoadDesc brdfRenderSceneShaderDesc = {};
-		brdfRenderSceneShaderDesc.mStages[0] = { "renderSceneBRDF.vert", NULL, 0, FSR_SrcShaders };
-		brdfRenderSceneShaderDesc.mStages[1] = { "renderSceneBRDF.frag", NULL, 0, FSR_SrcShaders };
+		brdfRenderSceneShaderDesc.mStages[0] = { "renderSceneBRDF.vert", NULL, 0, RD_SHADER_SOURCES };
+		brdfRenderSceneShaderDesc.mStages[1] = { "renderSceneBRDF.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &brdfRenderSceneShaderDesc, &pShaderBRDF);
 
 		const char* pStaticSampler2Names[] = { "envSampler", "defaultSampler" };
@@ -659,7 +633,7 @@ class PixelProjectedReflections: public IApp
 
 		//PPR_Projection
 		ShaderLoadDesc PPR_ProjectionShaderDesc = {};
-		PPR_ProjectionShaderDesc.mStages[0] = { "PPR_Projection.comp", NULL, 0, FSR_SrcShaders };
+		PPR_ProjectionShaderDesc.mStages[0] = { "PPR_Projection.comp", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &PPR_ProjectionShaderDesc, &pPPR_ProjectionShader);
 
 		RootSignatureDesc PPR_PRootDesc = { &pPPR_ProjectionShader, 1 };
@@ -667,8 +641,8 @@ class PixelProjectedReflections: public IApp
 
 		//PPR_Reflection
 		ShaderLoadDesc PPR_ReflectionShaderDesc = {};
-		PPR_ReflectionShaderDesc.mStages[0] = { "PPR_Reflection.vert", NULL, 0, FSR_SrcShaders };
-		PPR_ReflectionShaderDesc.mStages[1] = { "PPR_Reflection.frag", NULL, 0, FSR_SrcShaders };
+		PPR_ReflectionShaderDesc.mStages[0] = { "PPR_Reflection.vert", NULL, 0, RD_SHADER_SOURCES };
+		PPR_ReflectionShaderDesc.mStages[1] = { "PPR_Reflection.frag", NULL, 0, RD_SHADER_SOURCES };
 
 		addShader(pRenderer, &PPR_ReflectionShaderDesc, &pPPR_ReflectionShader);
 
@@ -680,8 +654,8 @@ class PixelProjectedReflections: public IApp
 
 		//PPR_HolePatching
 		ShaderLoadDesc PPR_HolePatchingShaderDesc = {};
-		PPR_HolePatchingShaderDesc.mStages[0] = { "PPR_Holepatching.vert", NULL, 0, FSR_SrcShaders };
-		PPR_HolePatchingShaderDesc.mStages[1] = { "PPR_Holepatching.frag", NULL, 0, FSR_SrcShaders };
+		PPR_HolePatchingShaderDesc.mStages[0] = { "PPR_Holepatching.vert", NULL, 0, RD_SHADER_SOURCES };
+		PPR_HolePatchingShaderDesc.mStages[1] = { "PPR_Holepatching.frag", NULL, 0, RD_SHADER_SOURCES };
 
 		addShader(pRenderer, &PPR_HolePatchingShaderDesc, &pPPR_HolePatchingShader);
 
@@ -694,27 +668,45 @@ class PixelProjectedReflections: public IApp
 		PPR_HolePatchingRootDesc.ppStaticSamplers = pStaticSamplersforHolePatching;
 		addRootSignature(pRenderer, &PPR_HolePatchingRootDesc, &pPPR_HolePatchingRootSignature);
 
-		// Create descriptor binder
-		DescriptorBinderDesc descriptorBinderDesc[] = {
-			{ pRootSigGbuffers, 0, MODEL_COUNT },
-			{ pSkyboxRootSignature },
-			{ pRootSigBRDF, 1 },
-			{ pPPR_ProjectionRootSignature },
-			{ pPPR_ReflectionRootSignature },
-			{ pPPR_HolePatchingRootSignature }
-		};
-		addDescriptorBinder(pRenderer, 0, sizeof(descriptorBinderDesc) / sizeof(*descriptorBinderDesc), descriptorBinderDesc, &pDescriptorBinder);
-
-		// Create depth state and rasterizer state
-		DepthStateDesc depthStateDesc = {};
-		depthStateDesc.mDepthTest = true;
-		depthStateDesc.mDepthWrite = true;
-		depthStateDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateDesc, &pDepth);
-
-		RasterizerStateDesc rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRasterstateDefault);
+		// Skybox
+		DescriptorSetDesc setDesc = { pSkyboxRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSkybox[0]);
+		setDesc = { pSkyboxRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSkybox[1]);
+		// GBuffer
+		if (gUseTexturesFallback)
+		{
+			setDesc = { pRootSigGbuffers, DESCRIPTOR_UPDATE_FREQ_NONE, 512 };
+		}
+		else
+		{
+			setDesc = { pRootSigGbuffers, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		}
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetGbuffers[0]);
+		setDesc = { pRootSigGbuffers, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetGbuffers[1]);
+		setDesc = { pRootSigGbuffers, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, 2 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetGbuffers[2]);
+		// BRDF
+		setDesc = { pRootSigBRDF, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF[0]);
+		setDesc = { pRootSigBRDF, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF[1]);
+		// PPR Projection
+		setDesc = { pPPR_ProjectionRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR_Projection[0]);
+		setDesc = { pPPR_ProjectionRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR_Projection[1]);
+		// PPR Reflection
+		setDesc = { pPPR_ReflectionRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR_Reflection[0]);
+		setDesc = { pPPR_ReflectionRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR_Reflection[1]);
+		// PPR Hole Patching
+		setDesc = { pPPR_HolePatchingRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR__HolePatching[0]);
+		setDesc = { pPPR_HolePatchingRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPPR__HolePatching[1]);
 
 		BufferLoadDesc sponza_buffDesc = {};
 		sponza_buffDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -723,7 +715,7 @@ class PixelProjectedReflections: public IApp
 		sponza_buffDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		sponza_buffDesc.pData = NULL;
 		sponza_buffDesc.ppBuffer = &pSponzaBuffer;
-		addResource(&sponza_buffDesc);
+		addResource(&sponza_buffDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		BufferLoadDesc lion_buffDesc = {};
 		lion_buffDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -732,7 +724,7 @@ class PixelProjectedReflections: public IApp
 		lion_buffDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		lion_buffDesc.pData = NULL;
 		lion_buffDesc.ppBuffer = &pLionBuffer;
-		addResource(&lion_buffDesc);
+		addResource(&lion_buffDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		//Generate sky box vertex buffer
 		float skyBoxPoints[] = {
@@ -766,10 +758,9 @@ class PixelProjectedReflections: public IApp
 		skyboxVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		skyboxVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		skyboxVbDesc.mDesc.mSize = skyBoxDataSize;
-		skyboxVbDesc.mDesc.mVertexStride = sizeof(float) * 4;
 		skyboxVbDesc.pData = skyBoxPoints;
 		skyboxVbDesc.ppBuffer = &pSkyboxVertexBuffer;
-		addResource(&skyboxVbDesc);
+		addResource(&skyboxVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		float screenQuadPoints[] = {
 			-1.0f, 3.0f, 0.5f, 0.0f, -1.0f, -1.0f, -1.0f, 0.5f, 0.0f, 1.0f, 3.0f, -1.0f, 0.5f, 2.0f, 1.0f,
@@ -780,10 +771,9 @@ class PixelProjectedReflections: public IApp
 		screenQuadVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		screenQuadVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		screenQuadVbDesc.mDesc.mSize = screenQuadDataSize;
-		screenQuadVbDesc.mDesc.mVertexStride = sizeof(float) * 5;
 		screenQuadVbDesc.pData = screenQuadPoints;
 		screenQuadVbDesc.ppBuffer = &pScreenQuadVertexBuffer;
-		addResource(&screenQuadVbDesc);
+		addResource(&screenQuadVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Uniform buffer for camera data
 		BufferLoadDesc ubCamDesc = {};
@@ -796,9 +786,9 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubCamDesc.ppBuffer = &pBufferUniformCamera[i];
-			addResource(&ubCamDesc);
+			addResource(&ubCamDesc, NULL, LOAD_PRIORITY_NORMAL);
 			ubCamDesc.ppBuffer = &pBufferUniformCameraSky[i];
-			addResource(&ubCamDesc);
+			addResource(&ubCamDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Uniform buffer for extended camera data
@@ -812,7 +802,7 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubECamDesc.ppBuffer = &pBufferUniformExtendedCamera[i];
-			addResource(&ubECamDesc);
+			addResource(&ubECamDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Uniform buffer for PPR's properties
@@ -826,7 +816,7 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubPPR_ProDesc.ppBuffer = &pBufferUniformPPRPro[i];
-			addResource(&ubPPR_ProDesc);
+			addResource(&ubPPR_ProDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Uniform buffer for light data
@@ -837,7 +827,7 @@ class PixelProjectedReflections: public IApp
 		ubLightsDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_NONE;
 		ubLightsDesc.pData = NULL;
 		ubLightsDesc.ppBuffer = &pBufferUniformLights;
-		addResource(&ubLightsDesc);
+		addResource(&ubLightsDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Uniform buffer for DirectionalLight data
 		BufferLoadDesc ubDLightsDesc = {};
@@ -847,7 +837,7 @@ class PixelProjectedReflections: public IApp
 		ubDLightsDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_NONE;
 		ubDLightsDesc.pData = NULL;
 		ubDLightsDesc.ppBuffer = &pBufferUniformDirectionalLights;
-		addResource(&ubDLightsDesc);
+		addResource(&ubDLightsDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Uniform buffer for extended camera data
 		BufferLoadDesc ubPlaneInfoDesc = {};
@@ -860,30 +850,34 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubPlaneInfoDesc.ppBuffer = &pBufferUniformPlaneInfo[i];
-			addResource(&ubPlaneInfoDesc);
+			addResource(&ubPlaneInfoDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
-		finishResourceLoading();
+		waitForAllResourceLoads();
 
 		// prepare resources
 
 		// Update the uniform buffer for the objects
 		mat4 sponza_modelmat = mat4::translation(vec3(0.0f, -6.0f, 0.0f)) * mat4::scale(vec3(0.02f, 0.02f, 0.02f));
-		pUniformDataMVP.mWorldMat = sponza_modelmat;
-		pUniformDataMVP.mMetallic = 0;
-		pUniformDataMVP.mRoughness = 0.5f;
-		pUniformDataMVP.pbrMaterials = 1;
-		BufferUpdateDesc sponza_objBuffUpdateDesc = { pSponzaBuffer, &pUniformDataMVP };
-		updateResource(&sponza_objBuffUpdateDesc);
+		gUniformDataMVP.mWorldMat = sponza_modelmat;
+		gUniformDataMVP.mMetallic = 0;
+		gUniformDataMVP.mRoughness = 0.5f;
+		gUniformDataMVP.pbrMaterials = 1;
+		BufferUpdateDesc sponza_objBuffUpdateDesc = { pSponzaBuffer };
+		beginUpdateResource(&sponza_objBuffUpdateDesc);
+		*(UniformObjData*)sponza_objBuffUpdateDesc.pMappedData = gUniformDataMVP;
+		endUpdateResource(&sponza_objBuffUpdateDesc, NULL);
 
 		// Update the uniform buffer for the objects
-		mat4 lion_modelmat = mat4::translation(vec3(0.0f, -6.0f, 1.0f)) * mat4::rotationY(-1.5708f) * mat4::scale(vec3(0.2f, 0.2f, 0.2f));
-		pUniformDataMVP.mWorldMat = lion_modelmat;
-		pUniformDataMVP.mMetallic = 0;
-		pUniformDataMVP.mRoughness = 0.5f;
-		pUniformDataMVP.pbrMaterials = 1;
-		BufferUpdateDesc lion_objBuffUpdateDesc = { pLionBuffer, &pUniformDataMVP };
-		updateResource(&lion_objBuffUpdateDesc);
+		mat4 lion_modelmat = mat4::translation(vec3(0.0f, -6.0f, 1.0f)) * mat4::rotationY(-1.5708f) * mat4::scale(vec3(0.2f, 0.2f, -0.2f));
+		gUniformDataMVP.mWorldMat = lion_modelmat;
+		gUniformDataMVP.mMetallic = 0;
+		gUniformDataMVP.mRoughness = 0.5f;
+		gUniformDataMVP.pbrMaterials = 1;
+		BufferUpdateDesc lion_objBuffUpdateDesc = { pLionBuffer };
+		beginUpdateResource(&lion_objBuffUpdateDesc);
+		*(UniformObjData*)lion_objBuffUpdateDesc.pMappedData = gUniformDataMVP;
+		endUpdateResource(&lion_objBuffUpdateDesc, NULL);
 
 		// Add light to scene
 
@@ -894,14 +888,14 @@ class PixelProjectedReflections: public IApp
 		light.mRadius = 10.0f;
 		light.mIntensity = 400.0f;
 
-		pUniformDataLights.mLights[0] = light;
+		gUniformDataLights.mLights[0] = light;
 
 		light.mCol = vec4(1.0f, 0.5f, 0.1f, 0.0f);
 		light.mPos = vec4(-12.5f, -3.5f, -3.7f, 0.0f);
 		light.mRadius = 10.0f;
 		light.mIntensity = 400.0f;
 
-		pUniformDataLights.mLights[1] = light;
+		gUniformDataLights.mLights[1] = light;
 
 		// Add light to scene
 		light.mCol = vec4(1.0f, 0.5f, 0.1f, 0.0f);
@@ -909,18 +903,20 @@ class PixelProjectedReflections: public IApp
 		light.mRadius = 10.0f;
 		light.mIntensity = 400.0f;
 
-		pUniformDataLights.mLights[2] = light;
+		gUniformDataLights.mLights[2] = light;
 
 		light.mCol = vec4(1.0f, 0.5f, 0.1f, 0.0f);
 		light.mPos = vec4(9.5f, -3.5f, -3.7f, 0.0f);
 		light.mRadius = 10.0f;
 		light.mIntensity = 400.0f;
 
-		pUniformDataLights.mLights[3] = light;
+		gUniformDataLights.mLights[3] = light;
 
-		pUniformDataLights.mCurrAmountOfLights = 4;
-		BufferUpdateDesc lightBuffUpdateDesc = { pBufferUniformLights, &pUniformDataLights };
-		updateResource(&lightBuffUpdateDesc);
+		gUniformDataLights.mCurrAmountOfLights = 4;
+		BufferUpdateDesc lightBuffUpdateDesc = { pBufferUniformLights };
+		beginUpdateResource(&lightBuffUpdateDesc);
+		*(UniformLightData*)lightBuffUpdateDesc.pMappedData = gUniformDataLights;
+		endUpdateResource(&lightBuffUpdateDesc, NULL);
 
 		//Directional light
 		DirectionalLight dLight;
@@ -928,25 +924,12 @@ class PixelProjectedReflections: public IApp
 		dLight.mPos = vec4(0.0f, 0.0f, 0.0f, 0.0f);
 		dLight.mDir = vec4(-1.0f, -1.5f, 1.0f, 0.0f);
 
-		pUniformDataDirectionalLights.mLights[0] = dLight;
-		pUniformDataDirectionalLights.mCurrAmountOfDLights = 1;
-		BufferUpdateDesc directionalLightBuffUpdateDesc = { pBufferUniformDirectionalLights, &pUniformDataDirectionalLights };
-		updateResource(&directionalLightBuffUpdateDesc);
-
-		// Create UI
-		if (!gAppUI.Init(pRenderer))
-			return false;
-
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
-
-		GuiDesc guiDesc = {};
-		float   dpiScale = getDpiScale().x;
-		guiDesc.mStartSize = vec2(370.0f / dpiScale, 320.0f / dpiScale);
-		guiDesc.mStartPosition = vec2(0.0f, guiDesc.mStartSize.getY());
-
-		pGui = gAppUI.AddGuiComponent("Pixel-Projected Reflections", &guiDesc);
-
-    pGui->AddWidget(CheckboxWidget("Toggle Micro Profiler", &bToggleMicroProfiler));
+		gUniformDataDirectionalLights.mLights[0] = dLight;
+		gUniformDataDirectionalLights.mCurrAmountOfDLights = 1;
+		BufferUpdateDesc directionalLightBuffUpdateDesc = { pBufferUniformDirectionalLights };
+		beginUpdateResource(&directionalLightBuffUpdateDesc);
+		*(UniformDirectionalLightData*)directionalLightBuffUpdateDesc.pMappedData = gUniformDataDirectionalLights;
+		endUpdateResource(&directionalLightBuffUpdateDesc, NULL);
 
 		static const uint32_t enumRenderModes[] = { SCENE_ONLY, PPR_ONLY, SCENE_WITH_PPR, SCENE_EXCLU_PPR, 0 };
 
@@ -974,7 +957,6 @@ class PixelProjectedReflections: public IApp
 		guiDesc2.mStartPosition = vec2(700.0f / dpiScale, 450.0f / dpiScale);
 		pLoadingGui = gAppUI.AddGuiComponent("Loading", &guiDesc2);
 
-		mProgressBarValueMax = 2 * ModelTotalProgress + TOTAL_IMGS * TextureTotalProgress;
 		ProgressBarWidget ProgressBar("               [ProgressBar]               ", &mProgressBarValue, mProgressBarValueMax);
 		pLoadingGui->AddWidget(ProgressBar);
 
@@ -984,26 +966,93 @@ class PixelProjectedReflections: public IApp
 
 		pCameraController = createFpsCameraController(camPos, lookAt);
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.InitLRSticks();
-		pCameraController->setVirtualJoystick(&gVirtualJoystick);
-#endif
-
 		pCameraController->setMotionParameters(camParameters);
 
-		InputSystem::RegisterInputEvent(cameraInputEvent);
+		// fill Gbuffers
+		// Create vertex layout
+		gVertexLayoutModel.mAttribCount = 3;
 
-		// In case copy queue should be externally synchronized(e.g. Vulkan with 1 queueu)
-		// do resource streaming after resource loading completed.
-		// Shared queue won't be used concurrently,
-		// unless someone will try to update GPU only or GPU-to-CPU resource after this point
-		addThreadSystemRangeTask(
-			pIOThreads, &memberTaskFunc<PixelProjectedReflections, &PixelProjectedReflections::loadTexture>, this, TOTAL_IMGS);
+		gVertexLayoutModel.mAttribs[0].mSemantic = SEMANTIC_POSITION;
+		gVertexLayoutModel.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
+		gVertexLayoutModel.mAttribs[0].mBinding = 0;
+		gVertexLayoutModel.mAttribs[0].mLocation = 0;
+		gVertexLayoutModel.mAttribs[0].mOffset = 0;
 
-		addThreadSystemRangeTask(
-			pIOThreads, &memberTaskFunc<PixelProjectedReflections, &PixelProjectedReflections::loadMesh>, this, 2);
+		//normals
+		gVertexLayoutModel.mAttribs[1].mSemantic = SEMANTIC_NORMAL;
+		gVertexLayoutModel.mAttribs[1].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
+		gVertexLayoutModel.mAttribs[1].mLocation = 1;
+		gVertexLayoutModel.mAttribs[1].mBinding = 0;
+		gVertexLayoutModel.mAttribs[1].mOffset = 3 * sizeof(float);
 
+		//texture
+		gVertexLayoutModel.mAttribs[2].mSemantic = SEMANTIC_TEXCOORD0;
+		gVertexLayoutModel.mAttribs[2].mFormat = TinyImageFormat_R32G32_SFLOAT;
+		gVertexLayoutModel.mAttribs[2].mLocation = 2;
+		gVertexLayoutModel.mAttribs[2].mBinding = 0;
+		gVertexLayoutModel.mAttribs[2].mOffset = 6 * sizeof(float);    // first attribute contains 3 floats
+
+		for (size_t i = 0; i < TOTAL_IMGS; i += 1)
+		{
+			loadTexture(i);
+		}
+		
+		for (size_t i = 0; i < 2; i += 1)
+		{
+			loadMesh(i);
+		}
+
+		gResourceSyncStartToken = getLastTokenCompleted();
+		
 		assignSponzaTextures();
+
+		if (!initInputSystem(pWindow))
+			return false;
+
+
+		// App Actions
+		InputActionDesc actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				bool capture = gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition);
+				setEnableCaptureInput(capture && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase);
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+		typedef bool (*CameraInputHandler)(InputActionContext* ctx, uint32_t index);
+		static CameraInputHandler onCameraInput = [](InputActionContext* ctx, uint32_t index)
+		{
+			if (!gAppUI.IsFocused() && *ctx->pCaptured)
+			{
+				gVirtualJoystick.OnMove(index, ctx->mPhase != INPUT_ACTION_PHASE_CANCELED, ctx->pPosition);
+				index ? pCameraController->onRotate(ctx->mFloat2) : pCameraController->onMove(ctx->mFloat2);
+			}
+			return true;
+		};
+		actionDesc = { InputBindings::FLOAT_RIGHTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 1); }, NULL, 20.0f, 200.0f, 1.0f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::FLOAT_LEFTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 0); }, NULL, 20.0f, 200.0f, 1.0f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_NORTH, [](InputActionContext* ctx) { pCameraController->resetView(); return true; } };
+		addInputAction(&actionDesc);
+		
+		// Prepare descriptor sets
+		DescriptorData skyParams[1] = {};
+		skyParams[0].pName = "skyboxTex";
+		skyParams[0].ppTextures = &pSkybox;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetSkybox[0], 1, skyParams);
+		for (uint32_t i = 0; i < gImageCount; ++i)
+		{
+			skyParams[0].pName = "uniformBlock";
+			skyParams[0].ppBuffers = &pBufferUniformCameraSky[i];
+			updateDescriptorSet(pRenderer, i, pDescriptorSetSkybox[1], 1, skyParams);
+		}
 
 		return true;
 	}
@@ -1011,9 +1060,31 @@ class PixelProjectedReflections: public IApp
 	void Exit()
 	{
 		waitQueueIdle(pGraphicsQueue);
+
+		// Remove streamer before removing any actual resources
+		// otherwise we might delete a resource while uploading to it.
+		waitForToken(&gResourceSyncToken);
+		waitForAllResourceLoads();
+
+
+		exitInputSystem();
 		destroyCameraController(pCameraController);
 
 		exitProfiler();
+
+		removeDescriptorSet(pRenderer, pDescriptorSetSkybox[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetSkybox[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetGbuffers[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetGbuffers[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetGbuffers[2]);
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR_Projection[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR_Projection[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR_Reflection[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR_Reflection[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR__HolePatching[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPPR__HolePatching[1]);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -1030,11 +1101,7 @@ class PixelProjectedReflections: public IApp
 		removeResource(pSponzaBuffer);
 		removeResource(pLionBuffer);
 
-#ifdef TARGET_IOS
 		gVirtualJoystick.Exit();
-#endif
-
-		removeGpuProfiler(pRenderer, pGpuProfiler);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -1045,20 +1112,13 @@ class PixelProjectedReflections: public IApp
 			removeResource(pBufferUniformCamera[i]);
 		}
 
-		// Remove streamer before removing any actual resources
-		// otherwise we might delete a resource while uploading to it.
-		shutdownThreadSystem(pIOThreads);
-		finishResourceLoading();
-
-		processWaitQueue();
-
 		removeResource(pBufferUniformLights);
 		removeResource(pBufferUniformDirectionalLights);
 		removeResource(pSkyboxVertexBuffer);
 		removeResource(pScreenQuadVertexBuffer);
 
-		for (Mesh& model : gModels)
-			unloadMesh(model);
+		for (Geometry*& model : gModels)
+			removeResource(model);
 
 		gAppUI.Exit();
 
@@ -1069,8 +1129,6 @@ class PixelProjectedReflections: public IApp
 		removeShader(pRenderer, pSkyboxShader);
 		removeShader(pRenderer, pShaderGbuffers);
 
-		removeDepthState(pDepth);
-		removeRasterizerState(pRasterstateDefault);
 		removeSampler(pRenderer, pSamplerBilinear);
 		removeSampler(pRenderer, pSamplerNearest);
 
@@ -1081,25 +1139,11 @@ class PixelProjectedReflections: public IApp
 		removeRootSignature(pRenderer, pSkyboxRootSignature);
 		removeRootSignature(pRenderer, pRootSigGbuffers);
 
-		removeDescriptorBinder(pRenderer, pDescriptorBinder);
-
 		// Remove commands and command pool&
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
 
-		removeQueue(pGraphicsQueue);
-
-		removeCmd_n(pPreCmdPool, gImageCount, pPrepCmds);
-		removeCmdPool(pRenderer, pPreCmdPool);
-
-		removeCmd_n(pBrdfCmdPool, gImageCount, pBrdfCmds);
-		removeCmdPool(pRenderer, pBrdfCmdPool);
-
-		removeCmd_n(pPPR_ProjectionCmdPool, gImageCount, pPPR_ProjectionCmds);
-		removeCmdPool(pRenderer, pPPR_ProjectionCmdPool);
-
-		removeCmd_n(pPPR_ReflectionCmdPool, gImageCount, pPPR_ReflectionCmds);
-		removeCmdPool(pRenderer, pPPR_ReflectionCmdPool);
+		removeQueue(pRenderer, pGraphicsQueue);
 
 		for (uint i = 0; i < TOTAL_IMGS; ++i)
 		{
@@ -1110,11 +1154,14 @@ class PixelProjectedReflections: public IApp
 		}
 
 		// Remove resource loader and renderer
-		removeResourceLoaderInterface(pRenderer);
+		exitResourceLoaderInterface(pRenderer);
 		removeRenderer(pRenderer);
+
+		gSponzaTextureIndexforMaterial.set_capacity(0);
+		gInitializeVal.set_capacity(0);
 	}
 
-		void ComputePBRMaps()
+	void ComputePBRMaps()
 	{
 		Texture*          pPanoSkybox = NULL;
 		Shader*           pPanoToCubeShader = NULL;
@@ -1130,7 +1177,23 @@ class PixelProjectedReflections: public IApp
 		RootSignature*    pSpecularRootSignature = NULL;
 		Pipeline*         pSpecularPipeline = NULL;
 		Sampler*          pSkyboxSampler = NULL;
-		DescriptorBinder* pPBRDescriptorBinder = NULL;
+		DescriptorSet*    pDescriptorSetBRDF = { NULL };
+		DescriptorSet*    pDescriptorSetPanoToCube[2] = { NULL };
+		DescriptorSet*    pDescriptorSetIrradiance = { NULL };
+		DescriptorSet*    pDescriptorSetSpecular[2] = { NULL };
+
+		static const int skyboxIndex = 0;
+		const char*      skyboxNames[] =
+		{
+			"LA_Helipad",
+		};
+		// PBR Texture values (these values are mirrored on the shaders).
+		static const uint32_t gBRDFIntegrationSize = 512;
+		static const uint32_t gSkyboxSize = 1024;
+		static const uint32_t gSkyboxMips = 11;
+		static const uint32_t gIrradianceSize = 32;
+		static const uint32_t gSpecularSize = 128;
+		static const uint32_t gSpecularMips = (uint)log2(gSpecularSize) + 1;
 
 		SamplerDesc samplerDesc = {
 			FILTER_LINEAR, FILTER_LINEAR, MIPMAP_MODE_LINEAR, ADDRESS_MODE_REPEAT, ADDRESS_MODE_REPEAT, ADDRESS_MODE_REPEAT, 0, 16
@@ -1138,22 +1201,21 @@ class PixelProjectedReflections: public IApp
 		addSampler(pRenderer, &samplerDesc, &pSkyboxSampler);
 
 		// Load the skybox panorama texture.
-		SyncToken       token = 0;
+		SyncToken token = {};
+		PathHandle panoramaFilePath = fsCopyPathInResourceDirectory(RD_OTHER_FILES, skyboxNames[skyboxIndex]);
 		TextureLoadDesc panoDesc = {};
-		panoDesc.mRoot = FSR_OtherFiles;
-		panoDesc.pFilename = "LA_Helipad";
+		panoDesc.pFilePath = panoramaFilePath;
 		panoDesc.ppTexture = &pPanoSkybox;
-		addResource(&panoDesc, &token);
+		addResource(&panoDesc, &token, LOAD_PRIORITY_HIGH);
 
 		TextureDesc skyboxImgDesc = {};
 		skyboxImgDesc.mArraySize = 6;
 		skyboxImgDesc.mDepth = 1;
-		skyboxImgDesc.mFormat = ImageFormat::RGBA32F;
+		skyboxImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		skyboxImgDesc.mHeight = gSkyboxSize;
 		skyboxImgDesc.mWidth = gSkyboxSize;
 		skyboxImgDesc.mMipLevels = gSkyboxMips;
 		skyboxImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		skyboxImgDesc.mSrgb = false;
 		skyboxImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		skyboxImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		skyboxImgDesc.pDebugName = L"skyboxImgBuff";
@@ -1161,17 +1223,16 @@ class PixelProjectedReflections: public IApp
 		TextureLoadDesc skyboxLoadDesc = {};
 		skyboxLoadDesc.pDesc = &skyboxImgDesc;
 		skyboxLoadDesc.ppTexture = &pSkybox;
-		addResource(&skyboxLoadDesc);
+		addResource(&skyboxLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		TextureDesc irrImgDesc = {};
 		irrImgDesc.mArraySize = 6;
 		irrImgDesc.mDepth = 1;
-		irrImgDesc.mFormat = ImageFormat::RGBA32F;
+		irrImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		irrImgDesc.mHeight = gIrradianceSize;
 		irrImgDesc.mWidth = gIrradianceSize;
 		irrImgDesc.mMipLevels = 1;
 		irrImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		irrImgDesc.mSrgb = false;
 		irrImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		irrImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		irrImgDesc.pDebugName = L"irrImgBuff";
@@ -1179,17 +1240,16 @@ class PixelProjectedReflections: public IApp
 		TextureLoadDesc irrLoadDesc = {};
 		irrLoadDesc.pDesc = &irrImgDesc;
 		irrLoadDesc.ppTexture = &pIrradianceMap;
-		addResource(&irrLoadDesc);
+		addResource(&irrLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		TextureDesc specImgDesc = {};
 		specImgDesc.mArraySize = 6;
 		specImgDesc.mDepth = 1;
-		specImgDesc.mFormat = ImageFormat::RGBA32F;
+		specImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		specImgDesc.mHeight = gSpecularSize;
 		specImgDesc.mWidth = gSpecularSize;
 		specImgDesc.mMipLevels = gSpecularMips;
 		specImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		specImgDesc.mSrgb = false;
 		specImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		specImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		specImgDesc.pDebugName = L"specImgBuff";
@@ -1197,7 +1257,7 @@ class PixelProjectedReflections: public IApp
 		TextureLoadDesc specImgLoadDesc = {};
 		specImgLoadDesc.pDesc = &specImgDesc;
 		specImgLoadDesc.ppTexture = &pSpecularMap;
-		addResource(&specImgLoadDesc);
+		addResource(&specImgLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Create empty texture for BRDF integration map.
 		TextureLoadDesc brdfIntegrationLoadDesc = {};
@@ -1207,36 +1267,46 @@ class PixelProjectedReflections: public IApp
 		brdfIntegrationDesc.mDepth = 1;
 		brdfIntegrationDesc.mArraySize = 1;
 		brdfIntegrationDesc.mMipLevels = 1;
-		brdfIntegrationDesc.mFormat = ImageFormat::RG32F;
+		brdfIntegrationDesc.mFormat = TinyImageFormat_R32G32_SFLOAT;
 		brdfIntegrationDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		brdfIntegrationDesc.mSampleCount = SAMPLE_COUNT_1;
 		brdfIntegrationDesc.mHostVisible = false;
 		brdfIntegrationLoadDesc.pDesc = &brdfIntegrationDesc;
 		brdfIntegrationLoadDesc.ppTexture = &pBRDFIntegrationMap;
-		addResource(&brdfIntegrationLoadDesc);
+		addResource(&brdfIntegrationLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Load pre-processing shaders.
 		ShaderLoadDesc panoToCubeShaderDesc = {};
-		panoToCubeShaderDesc.mStages[0] = { "panoToCube.comp", NULL, 0, FSR_SrcShaders };
+		panoToCubeShaderDesc.mStages[0] = { "panoToCube.comp", NULL, 0, RD_SHADER_SOURCES };
 
-		GPUPresetLevel presetLevel = pRenderer->mGpuSettings->mGpuVendorPreset.mPresetLevel;
+		GPUPresetLevel presetLevel = pRenderer->pActiveGpuSettings->mGpuVendorPreset.mPresetLevel;
 		uint32_t       importanceSampleCounts[GPUPresetLevel::GPU_PRESET_COUNT] = { 0, 0, 64, 128, 256, 1024 };
 		uint32_t       importanceSampleCount = importanceSampleCounts[presetLevel];
-		ShaderMacro    importanceSampleMacro = { "IMPORTANCE_SAMPLE_COUNT", eastl::string().sprintf("%u", importanceSampleCount) };
+		char           importanceSampleCountBuffer[5] = {};
+		sprintf(importanceSampleCountBuffer, "%u", importanceSampleCount);
+		ShaderMacro    importanceSampleMacro = { "IMPORTANCE_SAMPLE_COUNT", importanceSampleCountBuffer };
+
+		float          irradianceSampleDeltas[GPUPresetLevel::GPU_PRESET_COUNT] = { 0, 0, 0.25f, 0.025f, 0.025f, 0.025f };
+		float          irradianceSampleDelta = irradianceSampleDeltas[presetLevel];
+		char           irradianceSampleDeltaBuffer[10] = {};
+		sprintf(irradianceSampleDeltaBuffer, "%f", irradianceSampleDelta);
+		ShaderMacro    irradianceSampleMacro = { "SAMPLE_DELTA", irradianceSampleDeltaBuffer };
 
 		ShaderLoadDesc brdfIntegrationShaderDesc = {};
-		brdfIntegrationShaderDesc.mStages[0] = { "BRDFIntegration.comp", &importanceSampleMacro, 1, FSR_SrcShaders };
+		brdfIntegrationShaderDesc.mStages[0] = { "BRDFIntegration.comp", &importanceSampleMacro, 1, RD_SHADER_SOURCES };
 
 		ShaderLoadDesc irradianceShaderDesc = {};
-		irradianceShaderDesc.mStages[0] = { "computeIrradianceMap.comp", NULL, 0, FSR_SrcShaders };
+		irradianceShaderDesc.mStages[0] = { "computeIrradianceMap.comp", &irradianceSampleMacro, 1, RD_SHADER_SOURCES };
 
 		ShaderLoadDesc specularShaderDesc = {};
-		specularShaderDesc.mStages[0] = { "computeSpecularMap.comp", &importanceSampleMacro, 1, FSR_SrcShaders };
+		specularShaderDesc.mStages[0] = { "computeSpecularMap.comp", &importanceSampleMacro, 1, RD_SHADER_SOURCES };
 
+#ifndef TARGET_IOS
 		addShader(pRenderer, &panoToCubeShaderDesc, &pPanoToCubeShader);
-		addShader(pRenderer, &brdfIntegrationShaderDesc, &pBRDFIntegrationShader);
 		addShader(pRenderer, &irradianceShaderDesc, &pIrradianceShader);
 		addShader(pRenderer, &specularShaderDesc, &pSpecularShader);
+#endif
+		addShader(pRenderer, &brdfIntegrationShaderDesc, &pBRDFIntegrationShader);
 
 		const char*       pStaticSamplerNames[] = { "skyboxSampler" };
 		RootSignatureDesc panoRootDesc = { &pPanoToCubeShader, 1 };
@@ -1255,36 +1325,50 @@ class PixelProjectedReflections: public IApp
 		specularRootDesc.mStaticSamplerCount = 1;
 		specularRootDesc.ppStaticSamplerNames = pStaticSamplerNames;
 		specularRootDesc.ppStaticSamplers = &pSkyboxSampler;
+#ifndef TARGET_IOS
 		addRootSignature(pRenderer, &panoRootDesc, &pPanoToCubeRootSignature);
-		addRootSignature(pRenderer, &brdfRootDesc, &pBRDFIntegrationRootSignature);
 		addRootSignature(pRenderer, &irradianceRootDesc, &pIrradianceRootSignature);
 		addRootSignature(pRenderer, &specularRootDesc, &pSpecularRootSignature);
+#endif
+		addRootSignature(pRenderer, &brdfRootDesc, &pBRDFIntegrationRootSignature);
 
-		DescriptorBinderDesc descriptorBinderDesc[4] = { { pPanoToCubeRootSignature, gSkyboxMips + 1, gSkyboxMips + 1 },
-														 { pBRDFIntegrationRootSignature },
-														 { pIrradianceRootSignature },
-														 { pSpecularRootSignature, gSkyboxMips + 1, gSpecularMips + 1 } };
-
-		addDescriptorBinder(pRenderer, 0, 4, descriptorBinderDesc, &pPBRDescriptorBinder);
+		DescriptorSetDesc setDesc = { pBRDFIntegrationRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF);
+#ifndef TARGET_IOS
+		setDesc = { pPanoToCubeRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPanoToCube[0]);
+		setDesc = { pPanoToCubeRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gSkyboxMips };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPanoToCube[1]);
+		setDesc = { pIrradianceRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetIrradiance);
+		setDesc = { pSpecularRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSpecular[0]);
+		setDesc = { pSpecularRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gSkyboxMips };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSpecular[1]);
+#endif
 
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_COMPUTE;
 		ComputePipelineDesc& pipelineSettings = desc.mComputeDesc;
+#ifndef TARGET_IOS
 		pipelineSettings.pShaderProgram = pPanoToCubeShader;
 		pipelineSettings.pRootSignature = pPanoToCubeRootSignature;
 		addPipeline(pRenderer, &desc, &pPanoToCubePipeline);
-		pipelineSettings.pShaderProgram = pBRDFIntegrationShader;
-		pipelineSettings.pRootSignature = pBRDFIntegrationRootSignature;
-		addPipeline(pRenderer, &desc, &pBRDFIntegrationPipeline);
 		pipelineSettings.pShaderProgram = pIrradianceShader;
 		pipelineSettings.pRootSignature = pIrradianceRootSignature;
 		addPipeline(pRenderer, &desc, &pIrradiancePipeline);
 		pipelineSettings.pShaderProgram = pSpecularShader;
 		pipelineSettings.pRootSignature = pSpecularRootSignature;
 		addPipeline(pRenderer, &desc, &pSpecularPipeline);
+#endif
+		pipelineSettings.pShaderProgram = pBRDFIntegrationShader;
+		pipelineSettings.pRootSignature = pBRDFIntegrationRootSignature;
+		addPipeline(pRenderer, &desc, &pBRDFIntegrationPipeline);
+
+		Cmd* pCmd = ppCmds[0];
 
 		// Compute the BRDF Integration map.
-		beginCmd(ppCmds[0]);
+		beginCmd(pCmd);
 
 		TextureBarrier uavBarriers[4] = {
 			{ pSkybox, RESOURCE_STATE_UNORDERED_ACCESS },
@@ -1292,25 +1376,30 @@ class PixelProjectedReflections: public IApp
 			{ pSpecularMap, RESOURCE_STATE_UNORDERED_ACCESS },
 			{ pBRDFIntegrationMap, RESOURCE_STATE_UNORDERED_ACCESS },
 		};
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 4, uavBarriers, false);
+		cmdResourceBarrier(pCmd, 0, NULL, 4, uavBarriers, 0, NULL);
 
-		cmdBindPipeline(ppCmds[0], pBRDFIntegrationPipeline);
+		cmdBindPipeline(pCmd, pBRDFIntegrationPipeline);
 		DescriptorData params[2] = {};
 		params[0].pName = "dstTexture";
 		params[0].ppTextures = &pBRDFIntegrationMap;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pBRDFIntegrationRootSignature, 1, params);
-		const uint32_t* pThreadGroupSize = pBRDFIntegrationShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
-		cmdDispatch(ppCmds[0], gBRDFIntegrationSize / pThreadGroupSize[0], gBRDFIntegrationSize / pThreadGroupSize[1], pThreadGroupSize[2]);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetBRDF, 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetBRDF);
+		const uint32_t* pThreadGroupSize = pBRDFIntegrationShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
+		cmdDispatch(
+			pCmd, gBRDFIntegrationSize / pThreadGroupSize[0], gBRDFIntegrationSize / pThreadGroupSize[1],
+			pThreadGroupSize[2]);
 
 		TextureBarrier srvBarrier[1] = { { pBRDFIntegrationMap, RESOURCE_STATE_SHADER_RESOURCE } };
 
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 1, srvBarrier, true);
+		cmdResourceBarrier(pCmd, 0, NULL, 1, srvBarrier, 0, NULL);
 
+#ifndef TARGET_IOS
 		// Store the panorama texture inside a cubemap.
-		cmdBindPipeline(ppCmds[0], pPanoToCubePipeline);
+		cmdBindPipeline(pCmd, pPanoToCubePipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pPanoSkybox;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pPanoToCubeRootSignature, 1, params);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetPanoToCube[0], 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetPanoToCube[0]);
 
 		struct
 		{
@@ -1321,41 +1410,44 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < gSkyboxMips; ++i)
 		{
 			rootConstantData.mip = i;
-			params[0].pName = "RootConstant";
-			params[0].pRootConstant = &rootConstantData;
-			params[1].pName = "dstTexture";
-			params[1].ppTextures = &pSkybox;
-			params[1].mUAVMipSlice = i;
-			cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pPanoToCubeRootSignature, 2, params);
+			cmdBindPushConstants(pCmd, pPanoToCubeRootSignature, "RootConstant", &rootConstantData);
+			params[0].pName = "dstTexture";
+			params[0].ppTextures = &pSkybox;
+			params[0].mUAVMipSlice = i;
+			updateDescriptorSet(pRenderer, i, pDescriptorSetPanoToCube[1], 1, params);
+			cmdBindDescriptorSet(pCmd, i, pDescriptorSetPanoToCube[1]);
 
-			pThreadGroupSize = pPanoToCubeShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+			pThreadGroupSize = pPanoToCubeShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 			cmdDispatch(
-				ppCmds[0], max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[0]),
+				pCmd, max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[0]),
 				max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[1]), 6);
 		}
 
 		TextureBarrier srvBarriers[1] = { { pSkybox, RESOURCE_STATE_SHADER_RESOURCE } };
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 1, srvBarriers, false);
+		cmdResourceBarrier(pCmd, 0, NULL, 1, srvBarriers, 0, NULL);
 		/************************************************************************/
 		// Compute sky irradiance
 		/************************************************************************/
 		params[0] = {};
 		params[1] = {};
-		cmdBindPipeline(ppCmds[0], pIrradiancePipeline);
+		cmdBindPipeline(pCmd, pIrradiancePipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pSkybox;
 		params[1].pName = "dstTexture";
 		params[1].ppTextures = &pIrradianceMap;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pIrradianceRootSignature, 2, params);
-		pThreadGroupSize = pIrradianceShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
-		cmdDispatch(ppCmds[0], gIrradianceSize / pThreadGroupSize[0], gIrradianceSize / pThreadGroupSize[1], 6);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetIrradiance, 2, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetIrradiance);
+		pThreadGroupSize = pIrradianceShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
+		cmdDispatch(pCmd, gIrradianceSize / pThreadGroupSize[0], gIrradianceSize / pThreadGroupSize[1], 6);
+
 		/************************************************************************/
 		// Compute specular sky
 		/************************************************************************/
-		cmdBindPipeline(ppCmds[0], pSpecularPipeline);
+		cmdBindPipeline(pCmd, pSpecularPipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pSkybox;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pSpecularRootSignature, 1, params);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetSpecular[0], 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetSpecular[0]);
 
 		struct PrecomputeSkySpecularData
 		{
@@ -1368,197 +1460,77 @@ class PixelProjectedReflections: public IApp
 			PrecomputeSkySpecularData data = {};
 			data.roughness = (float)i / (float)(gSpecularMips - 1);
 			data.mipSize = gSpecularSize >> i;
-			params[0].pName = "RootConstant";
-			params[0].pRootConstant = &data;
-			params[1].pName = "dstTexture";
-			params[1].ppTextures = &pSpecularMap;
-			params[1].mUAVMipSlice = i;
-			cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pSpecularRootSignature, 2, params);
-			pThreadGroupSize = pIrradianceShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+			cmdBindPushConstants(pCmd, pSpecularRootSignature, "RootConstant", &data);
+			params[0].pName = "dstTexture";
+			params[0].ppTextures = &pSpecularMap;
+			params[0].mUAVMipSlice = i;
+			updateDescriptorSet(pRenderer, i, pDescriptorSetSpecular[1], 1, params);
+			cmdBindDescriptorSet(pCmd, i, pDescriptorSetSpecular[1]);
+			pThreadGroupSize = pIrradianceShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 			cmdDispatch(
-				ppCmds[0], max(1u, (gSpecularSize >> i) / pThreadGroupSize[0]),
+				pCmd, max(1u, (gSpecularSize >> i) / pThreadGroupSize[0]),
 				max(1u, (gSpecularSize >> i) / pThreadGroupSize[1]), 6);
 		}
+#endif
+		
 		/************************************************************************/
 		/************************************************************************/
 		TextureBarrier srvBarriers2[2] = { { pIrradianceMap, RESOURCE_STATE_SHADER_RESOURCE },
 										   { pSpecularMap, RESOURCE_STATE_SHADER_RESOURCE } };
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 2, srvBarriers2, false);
+		cmdResourceBarrier(pCmd, 0, NULL, 2, srvBarriers2, 0, NULL);
 
-		endCmd(ppCmds[0]);
-		waitTokenCompleted(token);
-		queueSubmit(pGraphicsQueue, 1, &ppCmds[0], NULL, 0, NULL, 0, NULL);
-		waitQueueIdle(pGraphicsQueue);
+		endCmd(pCmd);
+        
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.ppCmds = &pCmd;
+		submitDesc.pSignalFence = pRenderCompleteFences[0];
+		submitDesc.mSubmitDone = true;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		waitForFences(pRenderer, 1, &pRenderCompleteFences[0]);
 
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF);
+#ifndef TARGET_IOS
+		removeDescriptorSet(pRenderer, pDescriptorSetPanoToCube[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPanoToCube[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetIrradiance);
+		removeDescriptorSet(pRenderer, pDescriptorSetSpecular[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetSpecular[1]);
 		removePipeline(pRenderer, pSpecularPipeline);
 		removeRootSignature(pRenderer, pSpecularRootSignature);
 		removeShader(pRenderer, pSpecularShader);
 		removePipeline(pRenderer, pIrradiancePipeline);
 		removeRootSignature(pRenderer, pIrradianceRootSignature);
 		removeShader(pRenderer, pIrradianceShader);
-		removePipeline(pRenderer, pBRDFIntegrationPipeline);
-		removeRootSignature(pRenderer, pBRDFIntegrationRootSignature);
-		removeShader(pRenderer, pBRDFIntegrationShader);
 		removePipeline(pRenderer, pPanoToCubePipeline);
 		removeRootSignature(pRenderer, pPanoToCubeRootSignature);
 		removeShader(pRenderer, pPanoToCubeShader);
-		removeDescriptorBinder(pRenderer, pPBRDescriptorBinder);
+#endif
+		removePipeline(pRenderer, pBRDFIntegrationPipeline);
+		removeRootSignature(pRenderer, pBRDFIntegrationRootSignature);
+		removeShader(pRenderer, pBRDFIntegrationShader);
 		removeResource(pPanoSkybox);
 		removeSampler(pRenderer, pSkyboxSampler);
 	}
 
-
 	void loadMesh(size_t index)
 	{
 		//Load Sponza
-		AssimpImporter        importer;
-		AssimpImporter::Model model;
-		eastl::string       sceneFullPath = FileSystem::FixPath(gModelNames[index], FSRoot::FSR_Meshes);
-
-		if (!importer.ImportModel(sceneFullPath.c_str(), &model))
-		{
-			ErrorMsg("Failed to load %s", FileSystem::GetFileNameAndExtension(sceneFullPath).c_str());
-			return;
-		}
-
-		uint32_t meshCount = (uint32_t)model.mMeshArray.size();
-
-		Mesh& mesh = gModels[index];
-
-		mesh.materialID.resize(meshCount);
-		mesh.cmdArray.resize(meshCount);
-
-		MeshVertex* vertices = NULL;
-		uint32_t*   indices = NULL;
-
-		uint32_t totalVertexCount = 0;
-		uint32_t totalIndexCount = 0;
-		for (uint32_t i = 0; i < meshCount; i++)
-		{
-			AssimpImporter::Mesh subMesh = model.mMeshArray[i];
-
-			mesh.materialID[i] = subMesh.mMaterialId;
-
-			uint32_t vertexCount = (uint32_t)subMesh.mPositions.size();
-			uint32_t indexCount = (uint32_t)subMesh.mIndices.size();
-
-			mesh.cmdArray[i] = { indexCount, totalIndexCount, totalVertexCount };
-
-			vertices = (MeshVertex*)conf_realloc(vertices, sizeof(MeshVertex) * (totalVertexCount + vertexCount));
-			indices = (uint32_t*)conf_realloc(indices, sizeof(uint32_t) * (totalIndexCount + indexCount));
-
-			for (uint32_t j = 0; j < vertexCount; j++)
-			{
-				vertices[totalVertexCount++] = { subMesh.mPositions[j], subMesh.mNormals[j], subMesh.mUvs[j] };
-			}
-
-			for (uint32_t j = 0; j < indexCount; j++)
-			{
-				indices[totalIndexCount++] = subMesh.mIndices[j];
-			}
-		}
-
-		SyncToken token;
-
-		// Vertex position buffer for the scene
-		BufferLoadDesc vbPosDesc = {};
-		vbPosDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
-		vbPosDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		vbPosDesc.mDesc.mVertexStride = sizeof(MeshVertex);
-		vbPosDesc.mDesc.mSize = totalVertexCount * sizeof(MeshVertex);
-		vbPosDesc.pData = vertices;
-		vbPosDesc.ppBuffer = &mesh.pVertexBuffer;
-		vbPosDesc.mDesc.pDebugName = L"Vertex Position Buffer Desc for Sponza";
-		addResource(&vbPosDesc, &token);
-		addToWaitQueue({ token, { &freeData, vertices, 0 } });
-
-		// Index buffer for the scene
-		BufferLoadDesc ibDesc = {};
-		ibDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
-		ibDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		ibDesc.mDesc.mIndexType = INDEX_TYPE_UINT32;
-		ibDesc.mDesc.mSize = sizeof(uint32_t) * totalIndexCount;
-		ibDesc.pData = indices;
-		ibDesc.ppBuffer = &mesh.pIndexBuffer;
-		ibDesc.mDesc.pDebugName = L"Index Buffer Desc for Sponza";
-		addResource(&ibDesc, &token);
-		addToWaitQueue({ token, { &freeData, indices, 0 } });
-
-		addToWaitQueue(
-			{ token, { &methodCallback<PixelProjectedReflections, &PixelProjectedReflections::onResourceLoaded>, this, index } });
+		PathHandle sceneFullPath = fsCopyPathInResourceDirectory(RD_MESHES, gModelNames[index]);
+		GeometryLoadDesc loadDesc = {};
+		loadDesc.pFilePath = sceneFullPath;
+		loadDesc.ppGeometry = &gModels[index];
+		loadDesc.pVertexLayout = &gVertexLayoutModel;
+		addResource(&loadDesc, &gResourceSyncToken, LOAD_PRIORITY_NORMAL);
 	}
 
 	void loadTexture(size_t index)
 	{
-		TextureLoadDesc textureDesc;
-		memset(&textureDesc, 0, sizeof(textureDesc));
-		textureDesc.pFilename = pMaterialImageFileNames[index];
+		PathHandle texturePath = fsCopyPathInResourceDirectory(RD_TEXTURES, pMaterialImageFileNames[index]);
+		TextureLoadDesc textureDesc = {};
+		textureDesc.pFilePath = texturePath;
 		textureDesc.ppTexture = &pMaterialTextures[index];
-		textureDesc.mRoot = FSR_Textures;
-		SyncToken token;
-		addResource(&textureDesc, &token);
-		addToWaitQueue(
-			{ token, { &methodCallback<PixelProjectedReflections, &PixelProjectedReflections::onResourceLoaded>, this, index + 2 } });
-	}
-
-	static void freeData(void* userData, size_t) { conf_free(userData); }
-
-	typedef struct OnCompletion
-	{
-		void (*mOnCompletion)(void* userData, size_t arg);
-		void*  mUserData;
-		size_t mArg;
-	} OnCompletion;
-
-	template <class T, void (T::*callback)(size_t)>
-	static void methodCallback(void* userData, size_t arg)
-	{
-		T* pThis = static_cast<T*>(userData);
-		(pThis->*callback)(arg);
-	}
-
-	struct ResourceWait
-	{
-		SyncToken    mToken;
-		OnCompletion mCompletion;
-	};
-	eastl::vector<ResourceWait> mWaitQueue;
-	Mutex                         mQueueMutex;
-
-	void addToWaitQueue(ResourceWait wait)
-	{
-		mQueueMutex.Acquire();
-		mWaitQueue.push_back(wait);
-		mQueueMutex.Release();
-	}
-
-	void processWaitQueue()
-	{
-		const size_t MAX_COMPLETION_CHECKS = 16;
-		size_t       index = 0, count = MAX_COMPLETION_CHECKS;
-		mQueueMutex.Acquire();
-		while (index < count && index < mWaitQueue.size())
-		{
-			ResourceWait& resourceWait = mWaitQueue[index];
-			if (isTokenCompleted(resourceWait.mToken))
-			{
-				resourceWait.mCompletion.mOnCompletion(resourceWait.mCompletion.mUserData, resourceWait.mCompletion.mArg);
-				mWaitQueue.erase(mWaitQueue.begin() + index);
-
-				--count;
-			}
-			else
-			{
-				index++;
-			}
-		}
-		mQueueMutex.Release();
-	}
-
-	void onResourceLoaded(size_t resourceID)
-	{
-		uint64_t value = resourceID < 2 ? ModelTotalProgress : TextureTotalProgress;
-		mAtomicProgress += value;
+		addResource(&textureDesc, &gResourceSyncToken, LOAD_PRIORITY_NORMAL);
 	}
 
 	bool Load()
@@ -1581,77 +1553,56 @@ class PixelProjectedReflections: public IApp
 		if (!addIntermeditateBuffer())
 			return false;
 
-		if (!gAppUI.Load(pSwapChain->ppSwapchainRenderTargets))
+		if (!gAppUI.Load(pSwapChain->ppRenderTargets))
 			return false;
 
-		loadProfiler(pSwapChain->ppSwapchainRenderTargets[0]);
-#ifdef TARGET_IOS
-		if (!gVirtualJoystick.Load(pSwapChain->ppSwapchainRenderTargets[0]))
+		loadProfilerUI(&gAppUI, mSettings.mWidth, mSettings.mHeight);
+
+		if (!gVirtualJoystick.Load(pSwapChain->ppRenderTargets[0]))
 			return false;
-#endif
-
-		// fill Gbuffers
-		// Create vertex layout
-		VertexLayout vertexLayoutSphere = {};
-		vertexLayoutSphere.mAttribCount = 3;
-
-		vertexLayoutSphere.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		vertexLayoutSphere.mAttribs[0].mFormat = ImageFormat::RGB32F;
-		vertexLayoutSphere.mAttribs[0].mBinding = 0;
-		vertexLayoutSphere.mAttribs[0].mLocation = 0;
-		vertexLayoutSphere.mAttribs[0].mOffset = 0;
-
-		//normals
-		vertexLayoutSphere.mAttribs[1].mSemantic = SEMANTIC_NORMAL;
-		vertexLayoutSphere.mAttribs[1].mFormat = ImageFormat::RGB32F;
-		vertexLayoutSphere.mAttribs[1].mLocation = 1;
-
-		vertexLayoutSphere.mAttribs[1].mBinding = 0;
-		vertexLayoutSphere.mAttribs[1].mOffset = 3 * sizeof(float);
-
-		//texture
-		vertexLayoutSphere.mAttribs[2].mSemantic = SEMANTIC_TEXCOORD0;
-		vertexLayoutSphere.mAttribs[2].mFormat = ImageFormat::RG32F;
-		vertexLayoutSphere.mAttribs[2].mLocation = 2;
-		vertexLayoutSphere.mAttribs[2].mBinding = 0;
-		vertexLayoutSphere.mAttribs[2].mOffset = 6 * sizeof(float);    // first attribute contains 3 floats
 
 		/************************************************************************/
 		// Setup the resources needed for the Deferred Pass Pipeline
 		/************************************************************************/
-		ImageFormat::Enum deferredFormats[DEFERRED_RT_COUNT] = {};
-		bool              deferredSrgb[DEFERRED_RT_COUNT] = {};
+		TinyImageFormat deferredFormats[DEFERRED_RT_COUNT] = {};
 		for (uint32_t i = 0; i < DEFERRED_RT_COUNT; ++i)
 		{
-			deferredFormats[i] = pRenderTargetDeferredPass[i]->mDesc.mFormat;
-			deferredSrgb[i] = pRenderTargetDeferredPass[i]->mDesc.mSrgb;
+			deferredFormats[i] = pRenderTargetDeferredPass[i]->mFormat;
 		}
+
+		// Create depth state and rasterizer state
+		DepthStateDesc depthStateDesc = {};
+		depthStateDesc.mDepthTest = true;
+		depthStateDesc.mDepthWrite = true;
+		depthStateDesc.mDepthFunc = CMP_LEQUAL;
+
+		RasterizerStateDesc rasterizerStateDesc = {};
+		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
 
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_GRAPHICS;
 		GraphicsPipelineDesc& deferredPassPipelineSettings = desc.mGraphicsDesc;
 		deferredPassPipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		deferredPassPipelineSettings.mRenderTargetCount = DEFERRED_RT_COUNT;
-		deferredPassPipelineSettings.pDepthState = pDepth;
+		deferredPassPipelineSettings.pDepthState = &depthStateDesc;
 
 		deferredPassPipelineSettings.pColorFormats = deferredFormats;
-		deferredPassPipelineSettings.pSrgbValues = deferredSrgb;
 
-		deferredPassPipelineSettings.mSampleCount = pRenderTargetDeferredPass[0]->mDesc.mSampleCount;
-		deferredPassPipelineSettings.mSampleQuality = pRenderTargetDeferredPass[0]->mDesc.mSampleQuality;
+		deferredPassPipelineSettings.mSampleCount = pRenderTargetDeferredPass[0]->mSampleCount;
+		deferredPassPipelineSettings.mSampleQuality = pRenderTargetDeferredPass[0]->mSampleQuality;
 
-		deferredPassPipelineSettings.mDepthStencilFormat = pDepthBuffer->mDesc.mFormat;
+		deferredPassPipelineSettings.mDepthStencilFormat = pDepthBuffer->mFormat;
 		deferredPassPipelineSettings.pRootSignature = pRootSigGbuffers;
 		deferredPassPipelineSettings.pShaderProgram = pShaderGbuffers;
-		deferredPassPipelineSettings.pVertexLayout = &vertexLayoutSphere;
-		deferredPassPipelineSettings.pRasterizerState = pRasterstateDefault;
+		deferredPassPipelineSettings.pVertexLayout = &gVertexLayoutModel;
+		deferredPassPipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pPipelineGbuffers);
 
 		//layout and pipeline for skybox draw
 		VertexLayout vertexLayoutSkybox = {};
 		vertexLayoutSkybox.mAttribCount = 1;
 		vertexLayoutSkybox.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		vertexLayoutSkybox.mAttribs[0].mFormat = ImageFormat::RGBA32F;
+		vertexLayoutSkybox.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		vertexLayoutSkybox.mAttribs[0].mBinding = 0;
 		vertexLayoutSkybox.mAttribs[0].mLocation = 0;
 		vertexLayoutSkybox.mAttribs[0].mOffset = 0;
@@ -1663,15 +1614,14 @@ class PixelProjectedReflections: public IApp
 
 		deferredPassPipelineSettings.mRenderTargetCount = 1;
 		deferredPassPipelineSettings.pColorFormats = deferredFormats;
-		deferredPassPipelineSettings.pSrgbValues = deferredSrgb;
-		deferredPassPipelineSettings.mSampleCount = pRenderTargetDeferredPass[0]->mDesc.mSampleCount;
-		deferredPassPipelineSettings.mSampleQuality = pRenderTargetDeferredPass[0]->mDesc.mSampleQuality;
+		deferredPassPipelineSettings.mSampleCount = pRenderTargetDeferredPass[0]->mSampleCount;
+		deferredPassPipelineSettings.mSampleQuality = pRenderTargetDeferredPass[0]->mSampleQuality;
 
-		deferredPassPipelineSettings.mDepthStencilFormat = pDepthBuffer->mDesc.mFormat;
+		deferredPassPipelineSettings.mDepthStencilFormat = pDepthBuffer->mFormat;
 		deferredPassPipelineSettings.pRootSignature = pSkyboxRootSignature;
 		deferredPassPipelineSettings.pShaderProgram = pSkyboxShader;
 		deferredPassPipelineSettings.pVertexLayout = &vertexLayoutSkybox;
-		deferredPassPipelineSettings.pRasterizerState = pRasterstateDefault;
+		deferredPassPipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pSkyboxPipeline);
 
 		// BRDF
@@ -1680,14 +1630,14 @@ class PixelProjectedReflections: public IApp
 		vertexLayoutScreenQuad.mAttribCount = 2;
 
 		vertexLayoutScreenQuad.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		vertexLayoutScreenQuad.mAttribs[0].mFormat = ImageFormat::RGB32F;
+		vertexLayoutScreenQuad.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
 		vertexLayoutScreenQuad.mAttribs[0].mBinding = 0;
 		vertexLayoutScreenQuad.mAttribs[0].mLocation = 0;
 		vertexLayoutScreenQuad.mAttribs[0].mOffset = 0;
 
 		//Uv
 		vertexLayoutScreenQuad.mAttribs[1].mSemantic = SEMANTIC_TEXCOORD0;
-		vertexLayoutScreenQuad.mAttribs[1].mFormat = ImageFormat::RG32F;
+		vertexLayoutScreenQuad.mAttribs[1].mFormat = TinyImageFormat_R32G32_SFLOAT;
 		vertexLayoutScreenQuad.mAttribs[1].mLocation = 1;
 		vertexLayoutScreenQuad.mAttribs[1].mBinding = 0;
 		vertexLayoutScreenQuad.mAttribs[1].mOffset = 3 * sizeof(float);    // first attribute contains 3 floats
@@ -1698,17 +1648,16 @@ class PixelProjectedReflections: public IApp
 		pipelineSettings.mRenderTargetCount = 1;
 		pipelineSettings.pDepthState = NULL;
 
-		pipelineSettings.pColorFormats = &pSceneBuffer->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSceneBuffer->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSceneBuffer->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSceneBuffer->mDesc.mSampleQuality;
+		pipelineSettings.pColorFormats = &pSceneBuffer->mFormat;
+		pipelineSettings.mSampleCount = pSceneBuffer->mSampleCount;
+		pipelineSettings.mSampleQuality = pSceneBuffer->mSampleQuality;
 
 		// pipelineSettings.pDepthState is NULL, pipelineSettings.mDepthStencilFormat should be NONE
-		pipelineSettings.mDepthStencilFormat = ImageFormat::NONE;
+		pipelineSettings.mDepthStencilFormat = TinyImageFormat_UNDEFINED;
 		pipelineSettings.pRootSignature = pRootSigBRDF;
 		pipelineSettings.pShaderProgram = pShaderBRDF;
 		pipelineSettings.pVertexLayout = &vertexLayoutScreenQuad;
-		pipelineSettings.pRasterizerState = pRasterstateDefault;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pPipelineBRDF);
 
 		//PPR_Projection
@@ -1725,16 +1674,15 @@ class PixelProjectedReflections: public IApp
 		pipelineSettings.mRenderTargetCount = 1;
 		pipelineSettings.pDepthState = NULL;
 
-		pipelineSettings.pColorFormats = &pReflectionBuffer->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pReflectionBuffer->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pReflectionBuffer->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pReflectionBuffer->mDesc.mSampleQuality;
+		pipelineSettings.pColorFormats = &pReflectionBuffer->mFormat;
+		pipelineSettings.mSampleCount = pReflectionBuffer->mSampleCount;
+		pipelineSettings.mSampleQuality = pReflectionBuffer->mSampleQuality;
 
-		pipelineSettings.mDepthStencilFormat = ImageFormat::NONE;
+		pipelineSettings.mDepthStencilFormat = TinyImageFormat_UNDEFINED;
 		pipelineSettings.pRootSignature = pPPR_ReflectionRootSignature;
 		pipelineSettings.pShaderProgram = pPPR_ReflectionShader;
 		pipelineSettings.pVertexLayout = &vertexLayoutScreenQuad;
-		pipelineSettings.pRasterizerState = pRasterstateDefault;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pPPR_ReflectionPipeline);
 
 		//PPR_HolePatching -> Present
@@ -1743,21 +1691,22 @@ class PixelProjectedReflections: public IApp
 		pipelineSettings.mRenderTargetCount = 1;
 		pipelineSettings.pDepthState = NULL;
 
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
 
-		pipelineSettings.mDepthStencilFormat = ImageFormat::NONE;
+		pipelineSettings.mDepthStencilFormat = TinyImageFormat_UNDEFINED;
 		pipelineSettings.pRootSignature = pPPR_HolePatchingRootSignature;
 		pipelineSettings.pShaderProgram = pPPR_HolePatchingShader;
 		pipelineSettings.pVertexLayout = &vertexLayoutScreenQuad;
-		pipelineSettings.pRasterizerState = pRasterstateDefault;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		addPipeline(pRenderer, &desc, &pPPR_HolePatchingPipeline);
 
 #if defined(VULKAN)
 		transitionRenderTargets();
 #endif
+
+		PrepareDescriptorSets(false);
 
 		return true;
 	}
@@ -1766,12 +1715,10 @@ class PixelProjectedReflections: public IApp
 	{
 		waitQueueIdle(pGraphicsQueue);
 
-		unloadProfiler();
+		unloadProfilerUI();
 		gAppUI.Unload();
 
-#ifdef TARGET_IOS
 		gVirtualJoystick.Unload();
-#endif
 
 		removePipeline(pRenderer, pPipelineBRDF);
 		removePipeline(pRenderer, pSkyboxPipeline);
@@ -1793,19 +1740,14 @@ class PixelProjectedReflections: public IApp
 
 	void Update(float deltaTime)
 	{
-		processWaitQueue();
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
 
 #if !defined(TARGET_IOS) && !defined(_DURANGO)
-		if (pSwapChain->mDesc.mEnableVsync != gToggleVSync)
+		if (pSwapChain->mEnableVsync != gToggleVSync)
 		{
 			::toggleVSync(pRenderer, &pSwapChain);
 		}
 #endif
-
-		if (InputSystem::GetBoolInput(KEY_BUTTON_X_TRIGGERED))
-		{
-			RecenterCameraView(170.0f);
-		}
 
 		pCameraController->update(deltaTime);
 
@@ -1817,43 +1759,43 @@ class PixelProjectedReflections: public IApp
 
 		mat4 ViewProjMat = projMat * viewMat;
 
-		pUniformDataCamera.mProjectView = ViewProjMat;
-		pUniformDataCamera.mCamPos = pCameraController->getViewPosition();
+		gUniformDataCamera.mProjectView = ViewProjMat;
+		gUniformDataCamera.mCamPos = pCameraController->getViewPosition();
 
 		viewMat.setTranslation(vec3(0));
-		gUniformDataSky = pUniformDataCamera;
+		gUniformDataSky = gUniformDataCamera;
 		gUniformDataSky.mProjectView = projMat * viewMat;
 
 		//data uniforms
-		pUniformDataExtenedCamera.mCameraWorldPos = vec4(pCameraController->getViewPosition(), 1.0);
-		pUniformDataExtenedCamera.mViewMat = pCameraController->getViewMatrix();
-		pUniformDataExtenedCamera.mProjMat = projMat;
-		pUniformDataExtenedCamera.mViewProjMat = ViewProjMat;
-		pUniformDataExtenedCamera.mInvViewProjMat = inverse(ViewProjMat);
-		pUniformDataExtenedCamera.mViewPortSize =
+		gUniformDataExtenedCamera.mCameraWorldPos = vec4(pCameraController->getViewPosition(), 1.0);
+		gUniformDataExtenedCamera.mViewMat = pCameraController->getViewMatrix();
+		gUniformDataExtenedCamera.mProjMat = projMat;
+		gUniformDataExtenedCamera.mViewProjMat = ViewProjMat;
+		gUniformDataExtenedCamera.mInvViewProjMat = inverse(ViewProjMat);
+		gUniformDataExtenedCamera.mViewPortSize =
 			vec4(static_cast<float>(mSettings.mWidth), static_cast<float>(mSettings.mHeight), 0.0, 0.0);
 
 		//projection uniforms
-		pUniformPPRProData.renderMode = gRenderMode;
-		pUniformPPRProData.useHolePatching = gUseHolePatching == true ? 1.0f : 0.0f;
-		pUniformPPRProData.useExpensiveHolePatching = gUseExpensiveHolePatching == true ? 1.0f : 0.0f;
-		pUniformPPRProData.useNormalMap = gUseNormalMap == true ? 1.0f : 0.0f;
-		pUniformPPRProData.useFadeEffect = gUseFadeEffect == true ? 1.0f : 0.0f;
-		pUniformPPRProData.intensity = gRRP_Intensity;
+		gUniformPPRProData.renderMode = gRenderMode;
+		gUniformPPRProData.useHolePatching = gUseHolePatching == true ? 1.0f : 0.0f;
+		gUniformPPRProData.useExpensiveHolePatching = gUseExpensiveHolePatching == true ? 1.0f : 0.0f;
+		gUniformPPRProData.useNormalMap = gUseNormalMap == true ? 1.0f : 0.0f;
+		gUniformPPRProData.useFadeEffect = gUseFadeEffect == true ? 1.0f : 0.0f;
+		gUniformPPRProData.intensity = gRRP_Intensity;
 
 		//Planes
-		pUniformDataPlaneInfo.numPlanes = gPlaneNumber;
-		pUniformDataPlaneInfo.planeInfo[0].centerPoint = vec4(0.0, -6.0f, 0.9f, 0.0);
-		pUniformDataPlaneInfo.planeInfo[0].size = vec4(gPlaneSize);
+		gUniformDataPlaneInfo.numPlanes = gPlaneNumber;
+		gUniformDataPlaneInfo.planeInfo[0].centerPoint = vec4(0.0, -6.0f, 0.9f, 0.0);
+		gUniformDataPlaneInfo.planeInfo[0].size = vec4(gPlaneSize);
 
-		pUniformDataPlaneInfo.planeInfo[1].centerPoint = vec4(10.0, -5.0f, -1.25f, 0.0);
-		pUniformDataPlaneInfo.planeInfo[1].size = vec4(9.0f, 2.0f, 0.0f, 0.0f);
+		gUniformDataPlaneInfo.planeInfo[1].centerPoint = vec4(10.0, -5.0f, -1.25f, 0.0);
+		gUniformDataPlaneInfo.planeInfo[1].size = vec4(9.0f, 2.0f, 0.0f, 0.0f);
 
-		pUniformDataPlaneInfo.planeInfo[2].centerPoint = vec4(10.0, -5.0f, 3.0f, 0.0);
-		pUniformDataPlaneInfo.planeInfo[2].size = vec4(9.0f, 2.0f, 0.0f, 0.0f);
+		gUniformDataPlaneInfo.planeInfo[2].centerPoint = vec4(10.0, -5.0f, 3.0f, 0.0);
+		gUniformDataPlaneInfo.planeInfo[2].size = vec4(9.0f, 2.0f, 0.0f, 0.0f);
 
-		pUniformDataPlaneInfo.planeInfo[3].centerPoint = vec4(10.0, 1.0f, 0.9f, 0.0);
-		pUniformDataPlaneInfo.planeInfo[3].size = vec4(10.0f);
+		gUniformDataPlaneInfo.planeInfo[3].centerPoint = vec4(10.0, 1.0f, 0.9f, 0.0);
+		gUniformDataPlaneInfo.planeInfo[3].size = vec4(10.0f);
 
 		mat4 basicMat;
 		basicMat[0] = vec4(1.0, 0.0, 0.0, 0.0);     //tan
@@ -1861,39 +1803,30 @@ class PixelProjectedReflections: public IApp
 		basicMat[2] = vec4(0.0, 1.0, 0.0, 0.0);     //normal
 		basicMat[3] = vec4(0.0, 0.0, 0.0, 1.0);
 
-		pUniformDataPlaneInfo.planeInfo[0].rotMat = basicMat;
+		gUniformDataPlaneInfo.planeInfo[0].rotMat = basicMat;
 
-		pUniformDataPlaneInfo.planeInfo[1].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * -80.0f);
-		pUniformDataPlaneInfo.planeInfo[2].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * -100.0f);
-		pUniformDataPlaneInfo.planeInfo[3].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * 90.0f);
+		gUniformDataPlaneInfo.planeInfo[1].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * -80.0f);
+		gUniformDataPlaneInfo.planeInfo[2].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * -100.0f);
+		gUniformDataPlaneInfo.planeInfo[3].rotMat = basicMat.rotationX(0.01745329251994329576923690768489f * 90.0f);
 		;
 
-#if defined(DIRECT3D12) || defined(_DURANGO)
+#if defined(DIRECT3D12) || defined(ORBIS)
 
 		// Need to check why this should be transposed on DX12
 		// Even view or proj matrices work well....
 
-		pUniformDataPlaneInfo.planeInfo[0].rotMat = transpose(pUniformDataPlaneInfo.planeInfo[0].rotMat);
-		pUniformDataPlaneInfo.planeInfo[1].rotMat = transpose(pUniformDataPlaneInfo.planeInfo[1].rotMat);
-		pUniformDataPlaneInfo.planeInfo[2].rotMat = transpose(pUniformDataPlaneInfo.planeInfo[2].rotMat);
-		pUniformDataPlaneInfo.planeInfo[3].rotMat = transpose(pUniformDataPlaneInfo.planeInfo[3].rotMat);
+		gUniformDataPlaneInfo.planeInfo[0].rotMat = transpose(gUniformDataPlaneInfo.planeInfo[0].rotMat);
+		gUniformDataPlaneInfo.planeInfo[1].rotMat = transpose(gUniformDataPlaneInfo.planeInfo[1].rotMat);
+		gUniformDataPlaneInfo.planeInfo[2].rotMat = transpose(gUniformDataPlaneInfo.planeInfo[2].rotMat);
+		gUniformDataPlaneInfo.planeInfo[3].rotMat = transpose(gUniformDataPlaneInfo.planeInfo[3].rotMat);
 
 #endif
 
-		mPrevProgressBarValue = mProgressBarValue;
-		mProgressBarValue = mAtomicProgress;
-
-    // ProfileSetDisplayMode()
-    // TODO: need to change this better way 
-    if (bToggleMicroProfiler != bPrevToggleMicroProfiler)
-    {
-      Profile& S = *ProfileGet();
-      int nValue = bToggleMicroProfiler ? 1 : 0;
-      nValue = nValue >= 0 && nValue < P_DRAW_SIZE ? nValue : S.nDisplay;
-      S.nDisplay = nValue;
-
-      bPrevToggleMicroProfiler = bToggleMicroProfiler;
-    }
+		LoadPriority loadPriority = LOAD_PRIORITY_NORMAL;
+		SyncToken currentProgress = getLastTokenCompleted();
+		double progress = (double)(currentProgress.mWaitIndex[loadPriority] - gResourceSyncStartToken.mWaitIndex[loadPriority]) /
+											(double)(gResourceSyncToken.mWaitIndex[loadPriority] - gResourceSyncStartToken.mWaitIndex[loadPriority]);
+		mProgressBarValue = (size_t)(mProgressBarValueMax * progress);
 
 		/************************************************************************/
 		// Update GUI
@@ -1915,444 +1848,327 @@ class PixelProjectedReflections: public IApp
 		if (fenceStatus == FENCE_STATUS_INCOMPLETE)
 			waitForFences(pRenderer, 1, &pRenderCompleteFence);
 
-		eastl::vector<Cmd*> allCmds;
+		BufferUpdateDesc camBuffUpdateDesc = { pBufferUniformCamera[gFrameIndex] };
+		beginUpdateResource(&camBuffUpdateDesc);
+		*(UniformCamData*)camBuffUpdateDesc.pMappedData = gUniformDataCamera;
+		endUpdateResource(&camBuffUpdateDesc, NULL);
 
-		BufferUpdateDesc camBuffUpdateDesc = { pBufferUniformCamera[gFrameIndex], &pUniformDataCamera };
-		updateResource(&camBuffUpdateDesc);
+		BufferUpdateDesc skyboxViewProjCbv = { pBufferUniformCameraSky[gFrameIndex] };
+		beginUpdateResource(&skyboxViewProjCbv);
+		*(UniformCamData*)skyboxViewProjCbv.pMappedData = gUniformDataSky;
+		endUpdateResource(&skyboxViewProjCbv, NULL);
 
-		BufferUpdateDesc skyboxViewProjCbv = { pBufferUniformCameraSky[gFrameIndex], &gUniformDataSky };
-		updateResource(&skyboxViewProjCbv);
+		BufferUpdateDesc CbvExtendedCamera = { pBufferUniformExtendedCamera[gFrameIndex] };
+		beginUpdateResource(&CbvExtendedCamera);
+		*(UniformExtendedCamData*)CbvExtendedCamera.pMappedData = gUniformDataExtenedCamera;
+		endUpdateResource(&CbvExtendedCamera, NULL);
 
-		BufferUpdateDesc CbvExtendedCamera = { pBufferUniformExtendedCamera[gFrameIndex], &pUniformDataExtenedCamera };
-		updateResource(&CbvExtendedCamera);
+		BufferUpdateDesc CbPPR_Prop = { pBufferUniformPPRPro[gFrameIndex] };
+		beginUpdateResource(&CbPPR_Prop);
+		*(UniformPPRProData*)CbPPR_Prop.pMappedData = gUniformPPRProData;
+		endUpdateResource(&CbPPR_Prop, NULL);
 
-		BufferUpdateDesc CbPPR_Prop = { pBufferUniformPPRPro[gFrameIndex], &pUniformPPRProData };
-		updateResource(&CbPPR_Prop);
-
-		BufferUpdateDesc planeInfoBuffUpdateDesc = { pBufferUniformPlaneInfo[gFrameIndex], &pUniformDataPlaneInfo };
-		updateResource(&planeInfoBuffUpdateDesc);
+		BufferUpdateDesc planeInfoBuffUpdateDesc = { pBufferUniformPlaneInfo[gFrameIndex] };
+		beginUpdateResource(&planeInfoBuffUpdateDesc);
+		*(UniformPlaneInfoData*)planeInfoBuffUpdateDesc.pMappedData = gUniformDataPlaneInfo;
+		endUpdateResource(&planeInfoBuffUpdateDesc, NULL);
 
 		// Draw G-buffers
-		Cmd* cmd = pPrepCmds[gFrameIndex];
+		Cmd* cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);
 
-		cmdBeginGpuFrameProfile(cmd, pGpuProfiler);
+		cmdBeginGpuFrameProfile(cmd, gGpuProfileToken);
 
 		//Clear G-buffers and Depth buffer
 		LoadActionsDesc loadActions = {};
 		for (uint32_t i = 0; i < DEFERRED_RT_COUNT; ++i)
 		{
 			loadActions.mLoadActionsColor[i] = LOAD_ACTION_CLEAR;
-			loadActions.mClearColorValues[i] = pRenderTargetDeferredPass[i]->mDesc.mClearValue;
+			loadActions.mClearColorValues[i] = pRenderTargetDeferredPass[i]->mClearValue;
 		}
 
 		loadActions.mLoadActionDepth = LOAD_ACTION_CLEAR;
-		loadActions.mClearDepth = { 1.0f, 0.0f };    // Clear depth to the far plane and stencil to 0
+		loadActions.mClearDepth = {{1.0f, 0.0f}};    // Clear depth to the far plane and stencil to 0
 
 		// Transfer G-buffers to render target state for each buffer
-		TextureBarrier barrier;
+		RenderTargetBarrier barriers[DEFERRED_RT_COUNT + 2] = {};
+		barriers[0] = { pDepthBuffer, RESOURCE_STATE_DEPTH_WRITE };
 		for (uint32_t i = 0; i < DEFERRED_RT_COUNT; ++i)
 		{
-			barrier = { pRenderTargetDeferredPass[i]->pTexture, RESOURCE_STATE_RENDER_TARGET };
-			cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+			barriers[1 + i] = { pRenderTargetDeferredPass[i], RESOURCE_STATE_RENDER_TARGET };
 		}
 
 		// Transfer DepthBuffer to a DephtWrite State
-		barrier = { pDepthBuffer->pTexture, RESOURCE_STATE_DEPTH_WRITE };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, DEFERRED_RT_COUNT + 1, barriers);
 
 		cmdBindRenderTargets(cmd, 1, pRenderTargetDeferredPass, pDepthBuffer, &loadActions, NULL, NULL, -1, -1);
 		cmdSetViewport(
-			cmd, 0.0f, 0.0f, (float)pRenderTargetDeferredPass[0]->mDesc.mWidth, (float)pRenderTargetDeferredPass[0]->mDesc.mHeight, 0.0f,
+			cmd, 0.0f, 0.0f, (float)pRenderTargetDeferredPass[0]->mWidth, (float)pRenderTargetDeferredPass[0]->mHeight, 0.0f,
 			1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTargetDeferredPass[0]->mDesc.mWidth, pRenderTargetDeferredPass[0]->mDesc.mHeight);
+		cmdSetScissor(cmd, 0, 0, pRenderTargetDeferredPass[0]->mWidth, pRenderTargetDeferredPass[0]->mHeight);
 
 		// Draw the skybox.
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Render SkyBox", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Render SkyBox");
 
+		const uint32_t skyboxStride = sizeof(float) * 4;
 		cmdBindPipeline(cmd, pSkyboxPipeline);
-		DescriptorData skyParams[2] = {};
-		skyParams[0].pName = "uniformBlock";
-		skyParams[0].ppBuffers = &pBufferUniformCameraSky[gFrameIndex];
-		skyParams[1].pName = "skyboxTex";
-		skyParams[1].ppTextures = &pSkybox;
-		cmdBindDescriptors(cmd, pDescriptorBinder, pSkyboxRootSignature, 2, skyParams);
-		cmdBindVertexBuffer(cmd, 1, &pSkyboxVertexBuffer, NULL);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetSkybox[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetSkybox[1]);
+		cmdBindVertexBuffer(cmd, 1, &pSkyboxVertexBuffer, &skyboxStride, NULL);
 		cmdDraw(cmd, 36, 0);
 
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_LOAD;
 		cmdBindRenderTargets(cmd, DEFERRED_RT_COUNT, pRenderTargetDeferredPass, pDepthBuffer, &loadActions, NULL, NULL, -1, -1);
 		cmdSetViewport(
-			cmd, 0.0f, 0.0f, (float)pRenderTargetDeferredPass[0]->mDesc.mWidth, (float)pRenderTargetDeferredPass[0]->mDesc.mHeight, 0.0f,
+			cmd, 0.0f, 0.0f, (float)pRenderTargetDeferredPass[0]->mWidth, (float)pRenderTargetDeferredPass[0]->mHeight, 0.0f,
 			1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTargetDeferredPass[0]->mDesc.mWidth, pRenderTargetDeferredPass[0]->mDesc.mHeight);
+		cmdSetScissor(cmd, 0, 0, pRenderTargetDeferredPass[0]->mWidth, pRenderTargetDeferredPass[0]->mHeight);
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 		// Draw Sponza
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Fill GBuffers", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Fill GBuffers");
 		//The default code path we have if not iOS uses an array of texture of size 81
 		//iOS only supports 31 max texture units in a fragment shader for most devices.
 		//so fallback to binding every texture for every draw call (max of 5 textures)
 
-		bool dataLoaded = isThreadSystemIdle(pIOThreads) && isBatchCompleted();
+		static bool prevDataLoaded = false;
+		
+		SyncToken lastCompletedToken = getLastTokenCompleted();
+		bool dataLoaded = isTokenCompleted(&gResourceSyncToken);
 		if (dataLoaded)
 		{
-			Mesh& sponzaMesh = gModels[SPONZA_MODEL];
-
-			Buffer* pSponzaVertexBuffers[] = { sponzaMesh.pVertexBuffer };
-			cmdBindVertexBuffer(cmd, 1, pSponzaVertexBuffers, NULL);
-			cmdBindIndexBuffer(cmd, sponzaMesh.pIndexBuffer, 0);
-
-#ifdef TARGET_IOS
-			cmdBindPipeline(cmd, pPipelineGbuffers);
-			DescriptorData params[8] = {};
-			params[0].pName = "cbCamera";
-			params[0].ppBuffers = &pBufferUniformCamera[gFrameIndex];
-
-			for (uint32_t i = 0; i < (uint32_t)sponzaMesh.cmdArray.size(); ++i)
+			if (prevDataLoaded != dataLoaded)
 			{
-				int materialID = sponzaMesh.materialID[i];
-				materialID *= 5;    //because it uses 5 basic textures for redering BRDF
-
-				params[1].pName = "cbObject";
-				params[1].ppBuffers = &pSponzaBuffer;
-
-				for (int j = 0; j < 5; ++j)
-				{
-					//added
-					params[2 + j].pName = pTextureName[j];
-					params[2 + j].ppTextures = &pMaterialTextures[gSponzaTextureIndexforMaterial[materialID + j]];
-				}
-
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigGbuffers, 7, params);
-
-				Mesh::CmdParam& cmdData = sponzaMesh.cmdArray[i];
-				cmdDrawIndexed(cmd, cmdData.indexCount, cmdData.startIndex, cmdData.startVertex);
+				prevDataLoaded = dataLoaded;
+				waitQueueIdle(pGraphicsQueue);
+				PrepareDescriptorSets(true);
 			}
 
-#else
+			Geometry& sponzaMesh = *gModels[SPONZA_MODEL];
 
-			cmdBindPipeline(cmd, pPipelineGbuffers);
-			DescriptorData params[8] = {};
-			params[0].pName = "cbCamera";
-			params[0].ppBuffers = &pBufferUniformCamera[gFrameIndex];
-			params[1].pName = "cbObject";
-			params[1].ppBuffers = &pSponzaBuffer;
-			params[2].pName = "textureMaps";
-			params[2].ppTextures = pMaterialTextures;
-			params[2].mCount = TOTAL_IMGS;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigGbuffers, 3, params);
+			cmdBindIndexBuffer(cmd, sponzaMesh.pIndexBuffer, sponzaMesh.mIndexType, 0);
+			Buffer* pSponzaVertexBuffers[] = { sponzaMesh.pVertexBuffers[0] };
+			cmdBindVertexBuffer(cmd, 1, pSponzaVertexBuffers, sponzaMesh.mVertexStrides, NULL);
 
 			struct MaterialMaps
 			{
-				uint mapIDs[5];
+				uint textureMaps;
 			} data;
 
-			for (uint32_t i = 0; i < (uint32_t)sponzaMesh.cmdArray.size(); ++i)
+			
+			const uint32_t drawCount = (uint32_t)sponzaMesh.mDrawArgCount;
+
+			if (gUseTexturesFallback)
 			{
-				int materialID = sponzaMesh.materialID[i];
-				materialID *= 5;    //because it uses 5 basic textures for redering BRDF
-
-				for (int j = 0; j < 5; ++j)
+				cmdBindPipeline(cmd, pPipelineGbuffers);
+				cmdBindVertexBuffer(cmd, 1, pSponzaVertexBuffers, sponzaMesh.mVertexStrides, NULL);
+				cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetGbuffers[1]);
+				cmdBindDescriptorSet(cmd, 0, pDescriptorSetGbuffers[2]);
+				DescriptorData params[8] = {};
+				
+				for (uint32_t i = 0; i < drawCount; ++i)
 				{
-					//added
-					data.mapIDs[j] = gSponzaTextureIndexforMaterial[materialID + j];
+					int materialID = gMaterialIds[i];
+					materialID *= 5;    //because it uses 5 basic textures for redering BRDF
+					
+					for (int j = 0; j < 5; ++j)
+					{
+						params[j].pName = pTextureName[j];
+						params[j].ppTextures = &pMaterialTextures[gSponzaTextureIndexforMaterial[materialID + j]];
+					}
+					updateDescriptorSet(pRenderer, i, pDescriptorSetGbuffers[0], 5, params);
+					cmdBindDescriptorSet(cmd, i, pDescriptorSetGbuffers[0]);
+					
+					IndirectDrawIndexArguments& cmdData = sponzaMesh.pDrawArgs[i];
+					cmdDrawIndexed(cmd, cmdData.mIndexCount, cmdData.mStartIndex, cmdData.mVertexOffset);
 				}
-				params[0].pName = "cbTextureRootConstants";
-				params[0].pRootConstant = &data;
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigGbuffers, 1, params);
-
-				Mesh::CmdParam& cmdData = sponzaMesh.cmdArray[i];
-				cmdDrawIndexed(cmd, cmdData.indexCount, cmdData.startIndex, cmdData.startVertex);
 			}
-#endif
+			else
+			{
+				cmdBindPipeline(cmd, pPipelineGbuffers);
+				cmdBindVertexBuffer(cmd, 1, pSponzaVertexBuffers, sponzaMesh.mVertexStrides, NULL);
+				cmdBindDescriptorSet(cmd, 0, pDescriptorSetGbuffers[0]);
+				cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetGbuffers[1]);
+				cmdBindDescriptorSet(cmd, 0, pDescriptorSetGbuffers[2]);
 
-			Mesh& lionMesh = gModels[LION_MODEL];
+				for (uint32_t i = 0; i < drawCount; ++i)
+				{
+					int materialID = gMaterialIds[i];
+					materialID *= 5;    //because it uses 5 basic textures for redering BRDF
+
+					data.textureMaps =
+						((gSponzaTextureIndexforMaterial[materialID + 0] & 0xFF) << 0)  |
+						((gSponzaTextureIndexforMaterial[materialID + 1] & 0xFF) << 8)  |
+						((gSponzaTextureIndexforMaterial[materialID + 2] & 0xFF) << 16) |
+						((gSponzaTextureIndexforMaterial[materialID + 3] & 0xFF) << 24);
+						
+					cmdBindPushConstants(cmd, pRootSigGbuffers, "cbTextureRootConstants", &data);
+					IndirectDrawIndexArguments& cmdData = sponzaMesh.pDrawArgs[i];
+					cmdDrawIndexed(cmd, cmdData.mIndexCount, cmdData.mStartIndex, cmdData.mVertexOffset);
+				}
+			}
+
+			Geometry& lionMesh = *gModels[LION_MODEL];
 
 			//Draw Lion
-#ifdef TARGET_IOS
-			params[0].pName = "cbCamera";
-			params[0].ppBuffers = &pBufferUniformCamera[gFrameIndex];
-
-			params[1].pName = "cbObject";
-			params[1].ppBuffers = &pLionBuffer;
-
-			params[2].pName = pTextureName[0];
-			params[2].ppTextures = &pMaterialTextures[81];
-
-			params[3].pName = pTextureName[1];
-			params[3].ppTextures = &pMaterialTextures[83];
-
-			params[4].pName = pTextureName[2];
-			params[4].ppTextures = &pMaterialTextures[6];
-
-			params[5].pName = pTextureName[3];
-			params[5].ppTextures = &pMaterialTextures[6];
-
-			params[6].pName = pTextureName[4];
-			params[6].ppTextures = &pMaterialTextures[0];
-
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigGbuffers, 7, params);
-
-#else
-			data.mapIDs[0] = 81;
-			data.mapIDs[1] = 83;
-			data.mapIDs[2] = 6;
-			data.mapIDs[3] = 6;
-			data.mapIDs[4] = 0;
-
-			params[0].pName = "cbObject";
-			params[0].ppBuffers = &pLionBuffer;
-
-			params[1].pName = "cbTextureRootConstants";
-			params[1].pRootConstant = &data;
-
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigGbuffers, 2, params);
-#endif
-
-			Buffer* pLionVertexBuffers[] = { lionMesh.pVertexBuffer };
-			cmdBindVertexBuffer(cmd, 1, pLionVertexBuffers, NULL);
-			cmdBindIndexBuffer(cmd, lionMesh.pIndexBuffer, 0);
-
-			for (uint32_t i = 0; i < (uint32_t)lionMesh.cmdArray.size(); ++i)
+			if (gUseTexturesFallback)
 			{
-				Mesh::CmdParam& cmdData = lionMesh.cmdArray[i];
-				cmdDrawIndexed(cmd, cmdData.indexCount, cmdData.startIndex, cmdData.startVertex);
+				DescriptorData params[5] = {};
+				
+				params[0].pName = pTextureName[0];
+				params[0].ppTextures = &pMaterialTextures[81];
+
+				params[1].pName = pTextureName[1];
+				params[1].ppTextures = &pMaterialTextures[83];
+
+				params[2].pName = pTextureName[2];
+				params[2].ppTextures = &pMaterialTextures[6];
+
+				params[3].pName = pTextureName[3];
+				params[3].ppTextures = &pMaterialTextures[6];
+
+				params[4].pName = pTextureName[4];
+				params[4].ppTextures = &pMaterialTextures[0];
+				
+				updateDescriptorSet(pRenderer, drawCount + 1, pDescriptorSetGbuffers[0], 5, params);
+				cmdBindDescriptorSet(cmd, drawCount + 1, pDescriptorSetGbuffers[0]);
+			}
+			else
+			{
+				data.textureMaps =
+					((81 & 0xFF) << 0) |
+					((83 & 0xFF) << 8) |
+					((6 & 0xFF) << 16) |
+					((6 & 0xFF) << 24);
+
+				cmdBindPushConstants(cmd, pRootSigGbuffers, "cbTextureRootConstants", &data);
+			}
+			
+			cmdBindDescriptorSet(cmd, 1, pDescriptorSetGbuffers[2]);
+			
+			Buffer* pLionVertexBuffers[] = { lionMesh.pVertexBuffers[0] };
+			cmdBindVertexBuffer(cmd, 1, pLionVertexBuffers, lionMesh.mVertexStrides, NULL);
+			cmdBindIndexBuffer(cmd, lionMesh.pIndexBuffer, lionMesh.mIndexType, 0);
+
+			for (uint32_t i = 0; i < (uint32_t)lionMesh.mDrawArgCount; ++i)
+			{
+				IndirectDrawIndexArguments& cmdData = lionMesh.pDrawArgs[i];
+				cmdDrawIndexed(cmd, cmdData.mIndexCount, cmdData.mStartIndex, cmdData.mVertexOffset);
 			}
 		}
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
-		endCmd(cmd);
-		allCmds.push_back(cmd);
+		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
-		// Render BRDF
-		cmd = pBrdfCmds[gFrameIndex];
-		beginCmd(cmd);
-
+		// Transfer DepthBuffer to a Shader resource state
+		barriers[0] = { pDepthBuffer, RESOURCE_STATE_SHADER_RESOURCE };
+		// Transfer current render target to a render target state
+		barriers[1] = { pSceneBuffer, RESOURCE_STATE_RENDER_TARGET };
 		// Transfer G-buffers to a Shader resource state
 		for (uint32_t i = 0; i < DEFERRED_RT_COUNT; ++i)
 		{
-			barrier = { pRenderTargetDeferredPass[i]->pTexture, RESOURCE_STATE_SHADER_RESOURCE };
-			cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+			barriers[2 + i] = { pRenderTargetDeferredPass[i], RESOURCE_STATE_SHADER_RESOURCE };
 		}
 
-		// Transfer current render target to a render target state
-		barrier = { pSceneBuffer->pTexture, RESOURCE_STATE_RENDER_TARGET };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
-
-		// Transfer DepthBuffer to a Shader resource state
-		barrier = { pDepthBuffer->pTexture, RESOURCE_STATE_SHADER_RESOURCE };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, DEFERRED_RT_COUNT + 2, barriers);
 
 		loadActions = {};
 
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
-		loadActions.mClearColorValues[0] = pSceneBuffer->mDesc.mClearValue;
+		loadActions.mClearColorValues[0] = pSceneBuffer->mClearValue;
 
 		cmdBindRenderTargets(cmd, 1, &pSceneBuffer, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pSceneBuffer->mDesc.mWidth, (float)pSceneBuffer->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pSceneBuffer->mDesc.mWidth, pSceneBuffer->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pSceneBuffer->mWidth, (float)pSceneBuffer->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pSceneBuffer->mWidth, pSceneBuffer->mHeight);
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Render BRDF", false);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Render BRDF");
 
+		const uint32_t quadStride = sizeof(float) * 5;
 		cmdBindPipeline(cmd, pPipelineBRDF);
-		DescriptorData BRDFParams[12] = {};
-
-		BRDFParams[0].pName = "cbExtendCamera";
-		BRDFParams[0].ppBuffers = &pBufferUniformExtendedCamera[gFrameIndex];
-
-		BRDFParams[1].pName = "cbLights";
-		BRDFParams[1].ppBuffers = &pBufferUniformLights;
-
-		BRDFParams[2].pName = "cbDLights";
-		BRDFParams[2].ppBuffers = &pBufferUniformDirectionalLights;
-
-		BRDFParams[3].pName = "brdfIntegrationMap";
-		BRDFParams[3].ppTextures = &pBRDFIntegrationMap;
-
-		BRDFParams[4].pName = "irradianceMap";
-		BRDFParams[4].ppTextures = &pIrradianceMap;
-
-		BRDFParams[5].pName = "specularMap";
-		BRDFParams[5].ppTextures = &pSpecularMap;
-
-		BRDFParams[6].pName = "AlbedoTexture";
-		BRDFParams[6].ppTextures = &pRenderTargetDeferredPass[0]->pTexture;
-
-		BRDFParams[7].pName = "NormalTexture";
-		BRDFParams[7].ppTextures = &pRenderTargetDeferredPass[1]->pTexture;
-
-		BRDFParams[8].pName = "RoughnessTexture";
-		BRDFParams[8].ppTextures = &pRenderTargetDeferredPass[2]->pTexture;
-
-		BRDFParams[9].pName = "DepthTexture";
-		BRDFParams[9].ppTextures = &pDepthBuffer->pTexture;
-
-		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, NULL);
-
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSigBRDF, 10, BRDFParams);
-
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetBRDF[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetBRDF[1]);
+		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, &quadStride, NULL);
 		cmdDraw(cmd, 3, 0);
+//#endif
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
-		endCmd(cmd);
-		allCmds.push_back(cmd);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Pixel-Projected Reflections");
 
-		// PixelProjectReflections_ProjectionPass
-		cmd = pPPR_ProjectionCmds[gFrameIndex];
-		beginCmd(cmd);
-
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Pixel-Projected Reflections", false);
-
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "ProjectionPass", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "ProjectionPass");
 
 		cmdBindPipeline(cmd, pPPR_ProjectionPipeline);
-
-		DescriptorData PPR_ProjectionParams[5] = {};
-
-		PPR_ProjectionParams[0].pName = "cbExtendCamera";
-		PPR_ProjectionParams[0].ppBuffers = &pBufferUniformExtendedCamera[gFrameIndex];
-
-		PPR_ProjectionParams[1].pName = "IntermediateBuffer";
-		PPR_ProjectionParams[1].ppBuffers = &pIntermediateBuffer;
-
-		PPR_ProjectionParams[2].pName = "DepthTexture";
-		PPR_ProjectionParams[2].ppTextures = &pDepthBuffer->pTexture;
-
-		PPR_ProjectionParams[3].pName = "planeInfoBuffer";
-		PPR_ProjectionParams[3].ppBuffers = &pBufferUniformPlaneInfo[gFrameIndex];
-
-		cmdBindDescriptors(cmd, pDescriptorBinder, pPPR_ProjectionRootSignature, 4, PPR_ProjectionParams);
-
-		const uint32_t* pThreadGroupSize = pPPR_ProjectionShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetPPR_Projection[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetPPR_Projection[1]);
+		const uint32_t* pThreadGroupSize = pPPR_ProjectionShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 		cmdDispatch(cmd, (mSettings.mWidth * mSettings.mHeight / pThreadGroupSize[0]) + 1, 1, 1);
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
-
-		endCmd(cmd);
-		allCmds.push_back(cmd);
-
-		// PixelProjectReflections_ReflectionPass
-		cmd = pPPR_ReflectionCmds[gFrameIndex];
-		beginCmd(cmd);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 		RenderTarget* pRenderTarget = pReflectionBuffer;
 
-		barrier = { pSceneBuffer->pTexture, RESOURCE_STATE_SHADER_RESOURCE };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
-
 		// Transfer current render target to a render target state
-		barrier = { pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+		barriers[0] = { pSceneBuffer, RESOURCE_STATE_SHADER_RESOURCE };
+		barriers[1] = { pRenderTarget, RESOURCE_STATE_RENDER_TARGET };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 2, barriers);
 
 		loadActions = {};
 
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
-		loadActions.mClearColorValues[0] = pRenderTarget->mDesc.mClearValue;
+		loadActions.mClearColorValues[0] = pRenderTarget->mClearValue;
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "ReflectionPass", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "ReflectionPass");
 		cmdBindPipeline(cmd, pPPR_ReflectionPipeline);
-		DescriptorData PPR_ReflectionParams[7] = {};
-
-		PPR_ReflectionParams[0].pName = "cbExtendCamera";
-		PPR_ReflectionParams[0].ppBuffers = &pBufferUniformExtendedCamera[gFrameIndex];
-
-		PPR_ReflectionParams[1].pName = "SceneTexture";
-		PPR_ReflectionParams[1].ppTextures = &pSceneBuffer->pTexture;
-
-		PPR_ReflectionParams[2].pName = "planeInfoBuffer";
-		PPR_ReflectionParams[2].ppBuffers = &pBufferUniformPlaneInfo[gFrameIndex];
-
-		PPR_ReflectionParams[3].pName = "IntermediateBuffer";
-		PPR_ReflectionParams[3].ppBuffers = &pIntermediateBuffer;
-
-		PPR_ReflectionParams[4].pName = "DepthTexture";
-		PPR_ReflectionParams[4].ppTextures = &pDepthBuffer->pTexture;
-
-		PPR_ReflectionParams[5].pName = "cbProperties";
-		PPR_ReflectionParams[5].ppBuffers = &pBufferUniformPPRPro[gFrameIndex];
-
-		cmdBindDescriptors(cmd, pDescriptorBinder, pPPR_ReflectionRootSignature, 6, PPR_ReflectionParams);
-		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, NULL);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetPPR_Reflection[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetPPR_Reflection[1]);
+		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, &quadStride, NULL);
 		cmdDraw(cmd, 3, 0);
+
+		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
 		//End ReflectionPass
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
-		endCmd(cmd);
-		allCmds.push_back(cmd);
+		pRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 
-		//Present
-		cmd = ppCmds[gFrameIndex];
-		beginCmd(cmd);
-
-		pRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
-
-		barrier = { pReflectionBuffer->pTexture, RESOURCE_STATE_SHADER_RESOURCE };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
-
-		barrier = { pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, false);
+		barriers[0] = { pReflectionBuffer, RESOURCE_STATE_SHADER_RESOURCE };
+		barriers[1] = { pRenderTarget, RESOURCE_STATE_RENDER_TARGET };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 2, barriers);
 
 		loadActions = {};
 
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
-		loadActions.mClearColorValues[0] = pRenderTarget->mDesc.mClearValue;
+		loadActions.mClearColorValues[0] = pRenderTarget->mClearValue;
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "HolePatching", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "HolePatching");
 		cmdBindPipeline(cmd, pPPR_HolePatchingPipeline);
-
-		DescriptorData PPR_HolePatchingParams[6] = {};
-
-		PPR_HolePatchingParams[0].pName = "cbExtendCamera";
-		PPR_HolePatchingParams[0].ppBuffers = &pBufferUniformExtendedCamera[gFrameIndex];
-
-		PPR_HolePatchingParams[1].pName = "SceneTexture";
-		PPR_HolePatchingParams[1].ppTextures = &pSceneBuffer->pTexture;
-
-		PPR_HolePatchingParams[2].pName = "SSRTexture";
-		PPR_HolePatchingParams[2].ppTextures = &pReflectionBuffer->pTexture;
-
-		PPR_HolePatchingParams[3].pName = "cbProperties";
-		PPR_HolePatchingParams[3].ppBuffers = &pBufferUniformPPRPro[gFrameIndex];
-
-		cmdBindDescriptors(cmd, pDescriptorBinder, pPPR_HolePatchingRootSignature, 4, PPR_HolePatchingParams);
-
-		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, NULL);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetPPR__HolePatching[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetPPR__HolePatching[1]);
+		cmdBindVertexBuffer(cmd, 1, &pScreenQuadVertexBuffer, &quadStride, NULL);
 		cmdDraw(cmd, 3, 0);
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 		//End Pixel-Projected Reflections
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 		cmdBeginDebugMarker(cmd, 0, 1, 0, "Draw UI");
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, NULL, NULL, NULL, -1, -1);
-		static HiresTimer gTimer;
-		gTimer.GetUSec(true);
 
-#ifdef TARGET_IOS
 		gVirtualJoystick.Draw(cmd, { 1.0f, 1.0f, 1.0f, 1.0f });
-#endif
 
-		gAppUI.DrawText(
-			cmd, float2(8, 15), eastl::string().sprintf("CPU %f ms", gTimer.GetUSecAverage() / 1000.0f).c_str(), &gFrameTimeDraw);
-
-		gAppUI.DrawText(
-			cmd, float2(8, 40), eastl::string().sprintf("GPU %f ms", (float)pGpuProfiler->mCumulativeTime * 1000.0f).c_str(),
-			&gFrameTimeDraw);
-
-		gAppUI.DrawDebugGpuProfile(cmd, float2(8, 65), pGpuProfiler, NULL);
+        cmdDrawCpuProfile(cmd, float2(8.0f, 15.0f), &gFrameTimeDraw);
+		cmdDrawGpuProfile(cmd, float2(8, 40), gGpuProfileToken);
 
 		if (!dataLoaded)
 			gAppUI.Gui(pLoadingGui);
@@ -2361,7 +2177,7 @@ class PixelProjectedReflections: public IApp
 			gAppUI.Gui(pGui);
 #endif
 
-		cmdDrawProfiler(cmd);
+		cmdDrawProfilerUI();
 
 		gAppUI.Draw(cmd);
 		cmdEndDebugMarker(cmd);
@@ -2369,20 +2185,144 @@ class PixelProjectedReflections: public IApp
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
 		// Transition our texture to present state
-		barrier = { pRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		cmdResourceBarrier(cmd, 0, NULL, 1, &barrier, true);
-		cmdEndGpuFrameProfile(cmd, pGpuProfiler);
+		barriers[0] = { pRenderTarget, RESOURCE_STATE_PRESENT };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
+		cmdEndGpuFrameProfile(cmd, gGpuProfileToken);
 		endCmd(cmd);
-		allCmds.push_back(cmd);
 
-		queueSubmit(
-			pGraphicsQueue, (uint32_t)allCmds.size(), allCmds.data(), pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1,
-			&pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = &cmd;
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 		flipProfiler();
 	}
 
 	const char* GetName() { return "10_PixelProjectedReflections"; }
+
+	void PrepareDescriptorSets(bool dataLoaded)
+	{
+		// GBuffer
+		{
+			DescriptorData params[8] = {};
+			
+			if (!gUseTexturesFallback && dataLoaded)
+			{
+				params[0].pName = "textureMaps";
+				params[0].ppTextures = pMaterialTextures;
+				params[0].mCount = TOTAL_IMGS;
+				updateDescriptorSet(pRenderer, 0, pDescriptorSetGbuffers[0], 1, params);
+			}
+
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				params[0] = {};
+				params[0].pName = "cbCamera";
+				params[0].ppBuffers = &pBufferUniformCamera[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetGbuffers[1], 1, params);
+			}
+			params[0].pName = "cbObject";
+			params[0].ppBuffers = &pSponzaBuffer;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetGbuffers[2], 1, params);
+			params[0].ppBuffers = &pLionBuffer;
+			updateDescriptorSet(pRenderer, 1, pDescriptorSetGbuffers[2], 1, params);
+		}
+		// Shading
+		{
+			DescriptorData BRDFParams[12] = {};
+			BRDFParams[0].pName = "cbLights";
+			BRDFParams[0].ppBuffers = &pBufferUniformLights;
+			BRDFParams[1].pName = "cbDLights";
+			BRDFParams[1].ppBuffers = &pBufferUniformDirectionalLights;
+			BRDFParams[2].pName = "brdfIntegrationMap";
+			BRDFParams[2].ppTextures = &pBRDFIntegrationMap;
+			BRDFParams[3].pName = "irradianceMap";
+			BRDFParams[3].ppTextures = &pIrradianceMap;
+			BRDFParams[4].pName = "specularMap";
+			BRDFParams[4].ppTextures = &pSpecularMap;
+			BRDFParams[5].pName = "AlbedoTexture";
+			BRDFParams[5].ppTextures = &pRenderTargetDeferredPass[0]->pTexture;
+			BRDFParams[6].pName = "NormalTexture";
+			BRDFParams[6].ppTextures = &pRenderTargetDeferredPass[1]->pTexture;
+			BRDFParams[7].pName = "RoughnessTexture";
+			BRDFParams[7].ppTextures = &pRenderTargetDeferredPass[2]->pTexture;
+			BRDFParams[8].pName = "DepthTexture";
+			BRDFParams[8].ppTextures = &pDepthBuffer->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetBRDF[0], 9, BRDFParams);
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				BRDFParams[0].pName = "cbExtendCamera";
+				BRDFParams[0].ppBuffers = &pBufferUniformExtendedCamera[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetBRDF[1], 1, BRDFParams);
+			}
+		}
+		// PPR Projection
+		{
+			DescriptorData PPR_ProjectionParams[2] = {};
+			PPR_ProjectionParams[0].pName = "IntermediateBuffer";
+			PPR_ProjectionParams[0].ppBuffers = &pIntermediateBuffer;
+			PPR_ProjectionParams[1].pName = "DepthTexture";
+			PPR_ProjectionParams[1].ppTextures = &pDepthBuffer->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetPPR_Projection[0], 2, PPR_ProjectionParams);
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				PPR_ProjectionParams[0].pName = "cbExtendCamera";
+				PPR_ProjectionParams[0].ppBuffers = &pBufferUniformExtendedCamera[i];
+				PPR_ProjectionParams[1].pName = "planeInfoBuffer";
+				PPR_ProjectionParams[1].ppBuffers = &pBufferUniformPlaneInfo[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetPPR_Projection[1], 2, PPR_ProjectionParams);
+			}
+		}
+		// PPR Reflection
+		{
+			DescriptorData PPR_ReflectionParams[3] = {};
+			PPR_ReflectionParams[0].pName = "SceneTexture";
+			PPR_ReflectionParams[0].ppTextures = &pSceneBuffer->pTexture;
+			PPR_ReflectionParams[1].pName = "IntermediateBuffer";
+			PPR_ReflectionParams[1].ppBuffers = &pIntermediateBuffer;
+			PPR_ReflectionParams[2].pName = "DepthTexture";
+			PPR_ReflectionParams[2].ppTextures = &pDepthBuffer->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetPPR_Reflection[0], 3, PPR_ReflectionParams);
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				PPR_ReflectionParams[0].pName = "cbExtendCamera";
+				PPR_ReflectionParams[0].ppBuffers = &pBufferUniformExtendedCamera[i];
+				PPR_ReflectionParams[1].pName = "planeInfoBuffer";
+				PPR_ReflectionParams[1].ppBuffers = &pBufferUniformPlaneInfo[i];
+				PPR_ReflectionParams[2].pName = "cbProperties";
+				PPR_ReflectionParams[2].ppBuffers = &pBufferUniformPPRPro[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetPPR_Reflection[1], 3, PPR_ReflectionParams);
+			}
+		}
+		// PPR Hole Patching
+		{
+			DescriptorData PPR_HolePatchingParams[2] = {};
+			PPR_HolePatchingParams[0].pName = "SceneTexture";
+			PPR_HolePatchingParams[0].ppTextures = &pSceneBuffer->pTexture;
+			PPR_HolePatchingParams[1].pName = "SSRTexture";
+			PPR_HolePatchingParams[1].ppTextures = &pReflectionBuffer->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetPPR__HolePatching[0], 2, PPR_HolePatchingParams);
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				PPR_HolePatchingParams[0].pName = "cbExtendCamera";
+				PPR_HolePatchingParams[0].ppBuffers = &pBufferUniformExtendedCamera[i];
+				PPR_HolePatchingParams[1].pName = "cbProperties";
+				PPR_HolePatchingParams[1].ppBuffers = &pBufferUniformPPRPro[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetPPR__HolePatching[1], 2, PPR_HolePatchingParams);
+			}
+		}
+	}
 
 	bool addSwapChain()
 	{
@@ -2393,7 +2333,6 @@ class PixelProjectedReflections: public IApp
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
 		swapChainDesc.mEnableVsync = false;
 		::addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);
@@ -2405,9 +2344,9 @@ class PixelProjectedReflections: public IApp
 	{
 		RenderTargetDesc sceneRT = {};
 		sceneRT.mArraySize = 1;
-		sceneRT.mClearValue = { 0.0f, 0.0f, 0.0f, 0.0f };
+		sceneRT.mClearValue = {{0.0f, 0.0f, 0.0f, 0.0f}};
 		sceneRT.mDepth = 1;
-		sceneRT.mFormat = ImageFormat::RGBA8;
+		sceneRT.mFormat = TinyImageFormat_R8G8B8A8_UNORM;
 
 		sceneRT.mHeight = mSettings.mHeight;
 		sceneRT.mWidth = mSettings.mWidth;
@@ -2425,9 +2364,9 @@ class PixelProjectedReflections: public IApp
 	{
 		RenderTargetDesc RT = {};
 		RT.mArraySize = 1;
-		RT.mClearValue = { 0.0f, 0.0f, 0.0f, 0.0f };
+		RT.mClearValue = {{0.0f, 0.0f, 0.0f, 0.0f}};
 		RT.mDepth = 1;
-		RT.mFormat = ImageFormat::RGBA8;
+		RT.mFormat = TinyImageFormat_R8G8B8A8_UNORM;
 
 		RT.mHeight = mSettings.mHeight;
 		RT.mWidth = mSettings.mWidth;
@@ -2443,7 +2382,7 @@ class PixelProjectedReflections: public IApp
 
 	bool addGBuffers()
 	{
-		ClearValue optimizedColorClearBlack = { 0.0f, 0.0f, 0.0f, 0.0f };
+		ClearValue optimizedColorClearBlack = {{0.0f, 0.0f, 0.0f, 0.0f}};
 
 		/************************************************************************/
 		// Deferred pass render targets
@@ -2462,9 +2401,9 @@ class PixelProjectedReflections: public IApp
 		for (uint32_t i = 0; i < DEFERRED_RT_COUNT; ++i)
 		{
 			if (i == 1 || i == 2)
-				deferredRTDesc.mFormat = ImageFormat::RGBA16F;
+				deferredRTDesc.mFormat = TinyImageFormat_R16G16B16A16_SFLOAT;
 			else
-				deferredRTDesc.mFormat = ImageFormat::RGBA8;
+				deferredRTDesc.mFormat = TinyImageFormat_R8G8B8A8_UNORM;
 
 			addRenderTarget(pRenderer, &deferredRTDesc, &pRenderTargetDeferredPass[i]);
 		}
@@ -2477,9 +2416,9 @@ class PixelProjectedReflections: public IApp
 		// Add depth buffer
 		RenderTargetDesc depthRT = {};
 		depthRT.mArraySize = 1;
-		depthRT.mClearValue = { 1.0f, 0 };
+		depthRT.mClearValue = {{1.0f, 0}};
 		depthRT.mDepth = 1;
-		depthRT.mFormat = ImageFormat::D32F;
+		depthRT.mFormat = TinyImageFormat_D32_SFLOAT;
 		depthRT.mHeight = mSettings.mHeight;
 		depthRT.mSampleCount = SAMPLE_COUNT_1;
 		depthRT.mSampleQuality = 0;
@@ -2516,31 +2455,9 @@ class PixelProjectedReflections: public IApp
 
 		IntermediateBufferDesc.pData = gInitializeVal.data();
 		IntermediateBufferDesc.ppBuffer = &pIntermediateBuffer;
-		addResource(&IntermediateBufferDesc);
+		addResource(&IntermediateBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		return pIntermediateBuffer != NULL;
-	}
-
-	void RecenterCameraView(float maxDistance, vec3 lookAt = vec3(0))
-	{
-		vec3 p = pCameraController->getViewPosition();
-		vec3 d = p - lookAt;
-
-		float lenSqr = lengthSqr(d);
-		if (lenSqr > (maxDistance * maxDistance))
-		{
-			d *= (maxDistance / sqrtf(lenSqr));
-		}
-
-		p = d + lookAt;
-		pCameraController->moveTo(p);
-		pCameraController->lookAt(lookAt);
-	}
-
-	static bool cameraInputEvent(const ButtonData* data)
-	{
-		pCameraController->onInputEvent(data);
-		return true;
 	}
 };
 
@@ -2563,25 +2480,25 @@ void assignSponzaTextures()
 	gSponzaTextureIndexforMaterial.push_back(80);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	//02 : Material__57 (Plant)
+	// 02 : 16___Default (gi_flag)
+	gSponzaTextureIndexforMaterial.push_back(8);
+	gSponzaTextureIndexforMaterial.push_back(8);    // !!!!!!
+	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
+	gSponzaTextureIndexforMaterial.push_back(8);    // !!!!!
+	gSponzaTextureIndexforMaterial.push_back(AO);
+
+	//03 : Material__57 (Plant)
 	gSponzaTextureIndexforMaterial.push_back(75);
 	gSponzaTextureIndexforMaterial.push_back(76);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(77);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 03 : Material__298
+	// 04 : Material__298
 	gSponzaTextureIndexforMaterial.push_back(9);
 	gSponzaTextureIndexforMaterial.push_back(10);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(11);
-	gSponzaTextureIndexforMaterial.push_back(AO);
-
-	// 04 : 16___Default (gi_flag)
-	gSponzaTextureIndexforMaterial.push_back(8);
-	gSponzaTextureIndexforMaterial.push_back(8);    // !!!!!!
-	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
-	gSponzaTextureIndexforMaterial.push_back(8);    // !!!!!
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
 	// 05 : bricks
@@ -2640,95 +2557,95 @@ void assignSponzaTextures()
 	gSponzaTextureIndexforMaterial.push_back(33);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 13 : Material__47 - it seems missing
-	gSponzaTextureIndexforMaterial.push_back(19);
-	gSponzaTextureIndexforMaterial.push_back(20);
-	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
-	gSponzaTextureIndexforMaterial.push_back(21);
-	gSponzaTextureIndexforMaterial.push_back(AO);
-
-	// 14 : flagpole
+	// 13 : flagpole
 	gSponzaTextureIndexforMaterial.push_back(57);
 	gSponzaTextureIndexforMaterial.push_back(58);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(59);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 15 : fabric_e (green)
+	// 14 : fabric_e (green)
 	gSponzaTextureIndexforMaterial.push_back(51);
 	gSponzaTextureIndexforMaterial.push_back(52);
 	gSponzaTextureIndexforMaterial.push_back(53);
 	gSponzaTextureIndexforMaterial.push_back(54);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 16 : fabric_d (blue)
+	// 15 : fabric_d (blue)
 	gSponzaTextureIndexforMaterial.push_back(49);
 	gSponzaTextureIndexforMaterial.push_back(50);
 	gSponzaTextureIndexforMaterial.push_back(53);
 	gSponzaTextureIndexforMaterial.push_back(54);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 17 : fabric_a (red)
+	// 16 : fabric_a (red)
 	gSponzaTextureIndexforMaterial.push_back(55);
 	gSponzaTextureIndexforMaterial.push_back(56);
 	gSponzaTextureIndexforMaterial.push_back(53);
 	gSponzaTextureIndexforMaterial.push_back(54);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 18 : fabric_g (curtain_blue)
+	// 17 : fabric_g (curtain_blue)
 	gSponzaTextureIndexforMaterial.push_back(37);
 	gSponzaTextureIndexforMaterial.push_back(38);
 	gSponzaTextureIndexforMaterial.push_back(43);
 	gSponzaTextureIndexforMaterial.push_back(44);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 19 : fabric_c (curtain_red)
+	// 18 : fabric_c (curtain_red)
 	gSponzaTextureIndexforMaterial.push_back(41);
 	gSponzaTextureIndexforMaterial.push_back(42);
 	gSponzaTextureIndexforMaterial.push_back(43);
 	gSponzaTextureIndexforMaterial.push_back(44);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 20 : fabric_f (curtain_green)
+	// 19 : fabric_f (curtain_green)
 	gSponzaTextureIndexforMaterial.push_back(39);
 	gSponzaTextureIndexforMaterial.push_back(40);
 	gSponzaTextureIndexforMaterial.push_back(43);
 	gSponzaTextureIndexforMaterial.push_back(44);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 21 : chain
+	// 20 : chain
 	gSponzaTextureIndexforMaterial.push_back(12);
 	gSponzaTextureIndexforMaterial.push_back(14);
 	gSponzaTextureIndexforMaterial.push_back(13);
 	gSponzaTextureIndexforMaterial.push_back(15);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 22 : vase_hanging
+	// 21 : vase_hanging
 	gSponzaTextureIndexforMaterial.push_back(72);
 	gSponzaTextureIndexforMaterial.push_back(73);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(74);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 23 : vase
+	// 22 : vase
 	gSponzaTextureIndexforMaterial.push_back(69);
 	gSponzaTextureIndexforMaterial.push_back(70);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(71);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 24 : Material__25 (lion)
+	// 23 : Material__25 (lion)
 	gSponzaTextureIndexforMaterial.push_back(16);
 	gSponzaTextureIndexforMaterial.push_back(17);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(18);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 
-	// 25 : roof
+	// 24 : roof
 	gSponzaTextureIndexforMaterial.push_back(63);
 	gSponzaTextureIndexforMaterial.push_back(64);
 	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
 	gSponzaTextureIndexforMaterial.push_back(65);
+	gSponzaTextureIndexforMaterial.push_back(AO);
+
+	// 25 : Material__47 - it seems missing
+	gSponzaTextureIndexforMaterial.push_back(19);
+	gSponzaTextureIndexforMaterial.push_back(20);
+	gSponzaTextureIndexforMaterial.push_back(NoMetallic);
+	gSponzaTextureIndexforMaterial.push_back(21);
 	gSponzaTextureIndexforMaterial.push_back(AO);
 }
 

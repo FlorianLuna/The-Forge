@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -44,17 +44,19 @@ struct Fragment_Shader
     	PointSampler(PointSampler) {}
 };
 
+struct FSData {
+    texture2d<float> Source [[id(0)]];
+    sampler PointSampler    [[id(1)]];
+};
 
 fragment float4 stageMain(
     Fragment_Shader::VSOutput input [[stage_in]],
-    texture2d<float> Source [[texture(0)]],
-    sampler PointSampler [[sampler(0)]])
+    constant FSData& fsData         [[buffer(UPDATE_FREQ_NONE)]]
+)
 {
     Fragment_Shader::VSOutput input0;
     input0.Position = float4(input.Position.xyz, 1.0 / input.Position.w);
     input0.UV = input.UV;
-    Fragment_Shader main(
-    Source,
-    PointSampler);
+    Fragment_Shader main(fsData.Source, fsData.PointSampler);
     return main.main(input0);
 }

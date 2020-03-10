@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -30,7 +30,7 @@ Texture2D<float> DepthTexture;
 SamplerState clampMiplessLinearSampler : register(s0);
 SamplerState clampMiplessNearSampler : register(s1);
 
-cbuffer cameraUniformBlock : register(b0)
+cbuffer cameraUniformBlock : register(b0, UPDATE_FREQ_PER_FRAME)
 {
     float4x4 View;
     float4x4 Project;

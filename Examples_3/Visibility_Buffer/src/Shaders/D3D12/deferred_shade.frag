@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -58,16 +58,7 @@ Texture2D<float> aoTex : register(t100);
 Texture2D shadowMap : register(t101);
 
 SamplerState depthSampler : register(s0);
-ConstantBuffer<PerFrameConstants> uniforms : register(b0);
-
-cbuffer RootConstantDrawScene : register(b1)
-{
-	float4 lightColor;
-	uint lightingMode;
-	uint outputMode;
-	float4 CameraPlane; //x : near, y : far
-	
-};
+ConstantBuffer<PerFrameConstants> uniforms : register(b0, UPDATE_FREQ_PER_FRAME);
 
 // Pixel shader
 float4 main(VSOutput input, uint i : SV_SampleIndex) : SV_Target
@@ -136,7 +127,7 @@ float4 main(VSOutput input, uint i : SV_SampleIndex) : SV_Target
 	
 	float shadowFactor = 1.0f;
 
-	float fLightingMode = saturate(float(lightingMode));
+	float fLightingMode = saturate(float(uniforms.lightingMode));
 
 	float Roughness = clamp(specularData.a, 0.05f, 0.99f);
 	float Metallic = specularData.b;
@@ -164,7 +155,7 @@ float4 main(VSOutput input, uint i : SV_SampleIndex) : SV_Target
 			shadowFactor);
 
 
-	shadedColor = shadedColor * lightColor.rgb * lightColor.a * NoL * ao;
+	shadedColor = shadedColor * uniforms.lightColor.rgb * uniforms.lightColor.a * NoL * ao;
 
 	float ambientIntencity = 0.2f;
 	float3 ambient = colorData.xyz * ambientIntencity;

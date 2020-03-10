@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -36,9 +36,10 @@
 #include "../../../../Common_3/OS/Interfaces/IFileSystem.h"
 #include "../../../../Common_3/OS/Interfaces/ITime.h"
 #include "../../../../Common_3/OS/Interfaces/IProfiler.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
 #include "../../../../Common_3/Renderer/IRenderer.h"
 #include "../../../../Common_3/OS/Interfaces/IApp.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
@@ -46,20 +47,12 @@
 //ui
 #include "../../../../Middleware_3/UI/AppUI.h"
 
-//input
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
-
 #include "../../../../Common_3/OS/Interfaces/IMemory.h"
 
 // Julia4D Parameters
 #define SIZE_X 412
 #define SIZE_Y 256
 #define SIZE_Z 1024
-
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-#define MOBILE_PLATFORM
-#endif
 
 const float gTimeScale = 0.2f;
 
@@ -88,26 +81,8 @@ struct UniformBlock
 	int mRenderSoftShadows;
 };
 
-Timer      gAccumTimer;
-HiresTimer gTimer;
-
-const char* pszBases[FSR_Count] = {
-	"../../../src/02_Compute/",             // FSR_BinShaders
-	"../../../src/02_Compute/",             // FSR_SrcShaders
-	"../../../UnitTestResources/",          // FSR_Textures
-	"../../../UnitTestResources/",          // FSR_Meshes
-	"../../../UnitTestResources/",          // FSR_Builtin_Fonts
-	"../../../src/02_Compute/",             // FSR_GpuConfig
-	"",                                     // FSR_Animation
-	"",                                     // FSR_Audio
-	"",                                     // FSR_OtherFiles
-	"../../../../../Middleware_3/Text/",    // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",      // FSR_MIDDLEWARE_UI
-};
 
 const uint32_t gImageCount = 3;
-bool           bToggleMicroProfiler = false;
-bool           bPrevToggleMicroProfiler = false;
 
 Renderer* pRenderer = NULL;
 Buffer*   pUniformBuffer[gImageCount] = { NULL };
@@ -116,7 +91,6 @@ Queue*           pGraphicsQueue = NULL;
 CmdPool*         pCmdPool = NULL;
 Cmd**            ppCmds = NULL;
 Sampler*         pSampler = NULL;
-RasterizerState* pRast = NULL;
 
 Fence*     pRenderCompleteFences[gImageCount] = { NULL };
 Semaphore* pImageAcquiredSemaphore = NULL;
@@ -133,17 +107,17 @@ Pipeline*         pComputePipeline = NULL;
 RootSignature*    pComputeRootSignature = NULL;
 Texture*          pTextureComputeOutput = NULL;
 
-DescriptorBinder* pDescriptorBinder = NULL;
+DescriptorSet*    pDescriptorSetUniforms = NULL;
+DescriptorSet*    pDescriptorSetComputeTexture = NULL;
+DescriptorSet*    pDescriptorSetTexture = NULL;
 
-#if defined(MOBILE_PLATFORM)
 VirtualJoystickUI gVirtualJoystick;
-#endif
 
 uint32_t     gFrameIndex = 0;
+ProfileToken gGpuProfileToken = PROFILE_INVALID_TOKEN;
 UniformBlock gUniformData;
 
 UIApp              gAppUI;
-GpuProfiler*       pGpuProfiler = NULL;
 ICameraController* pCameraController = NULL;
 
 struct ObjectProperty
@@ -152,7 +126,6 @@ struct ObjectProperty
 } gObjSettings;
 
 TextDrawDesc gFrameTimeDraw = TextDrawDesc(0, 0xff00ffff, 18);
-GuiComponent* pGui = NULL;
 
 class Compute: public IApp
 {
@@ -166,6 +139,21 @@ class Compute: public IApp
 	
 	bool Init()
 	{
+        // FILE PATHS
+        PathHandle programDirectory = fsCopyProgramDirectoryPath();
+        if (!fsPlatformUsesBundledResources())
+        {
+            PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/02_Compute");
+            fsSetResourceDirectoryRootPath(resourceDirRoot);
+            
+            fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../UnitTestResources/Textures");
+            fsSetRelativePathForResourceDirectory(RD_MESHES,             "../../UnitTestResources/Meshes");
+            fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,     "../../UnitTestResources/Fonts");
+            fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,         "../../UnitTestResources/Animation");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,     "../../../../Middleware_3/Text");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,     "../../../../Middleware_3/UI");
+        }
+        
 		initNoise();
 
 		// window and renderer setup
@@ -176,11 +164,15 @@ class Compute: public IApp
 			return false;
 
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
 		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -191,28 +183,20 @@ class Compute: public IApp
 
 		initResourceLoaderInterface(pRenderer);
 
-		// Initialize profile
-		initProfiler(pRenderer);
-		profileRegisterInput();
-
-		addGpuProfiler(pRenderer, pGraphicsQueue, &pGpuProfiler, "GpuProfiler");
-#if defined(MOBILE_PLATFORM)
-		if (!gVirtualJoystick.Init(pRenderer, "circlepad", FSR_Textures))
+		if (!gVirtualJoystick.Init(pRenderer, "circlepad", RD_TEXTURES))
+		{
+			LOGF(LogLevel::eERROR, "Could not initialize Virtual Joystick.");
 			return false;
-#endif
+		}
 
 		ShaderLoadDesc displayShader = {};
-		displayShader.mStages[0] = { "display.vert", NULL, 0, FSR_SrcShaders };
-		displayShader.mStages[1] = { "display.frag", NULL, 0, FSR_SrcShaders };
+		displayShader.mStages[0] = { "display.vert", NULL, 0, RD_SHADER_SOURCES };
+		displayShader.mStages[1] = { "display.frag", NULL, 0, RD_SHADER_SOURCES };
 		ShaderLoadDesc computeShader = {};
-		computeShader.mStages[0] = { "compute.comp", NULL, 0, FSR_SrcShaders };
+		computeShader.mStages[0] = { "compute.comp", NULL, 0, RD_SHADER_SOURCES };
 
 		addShader(pRenderer, &displayShader, &pShader);
 		addShader(pRenderer, &computeShader, &pComputeShader);
-
-		RasterizerStateDesc rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRast);
 
 		SamplerDesc samplerDesc = { FILTER_NEAREST,
 									FILTER_NEAREST,
@@ -236,8 +220,12 @@ class Compute: public IApp
 		computeRootDesc.ppShaders = &pComputeShader;
 		addRootSignature(pRenderer, &computeRootDesc, &pComputeRootSignature);
 
-		DescriptorBinderDesc descriptorBinderDesc[] = { { pRootSignature }, { pComputeRootSignature } };
-		addDescriptorBinder(pRenderer, 0, 2, descriptorBinderDesc, &pDescriptorBinder);
+		DescriptorSetDesc setDesc = { pRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetTexture);
+		setDesc = { pComputeRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetComputeTexture);
+		setDesc = { pComputeRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetUniforms);
 
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_COMPUTE;
@@ -255,7 +243,7 @@ class Compute: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			ubDesc.ppBuffer = &pUniformBuffer[i];
-			addResource(&ubDesc);
+			addResource(&ubDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Width and height needs to be same as Texture's
@@ -265,16 +253,12 @@ class Compute: public IApp
 		if (!gAppUI.Init(pRenderer))
 			return false;
 
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
+		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
 
-    GuiDesc guiDesc = {};
-    float   dpiScale = getDpiScale().x;
-    guiDesc.mStartSize = vec2(140.0f / dpiScale, 320.0f / dpiScale);
-    guiDesc.mStartPosition = vec2(mSettings.mWidth - guiDesc.mStartSize.getX() * 1.1f, guiDesc.mStartSize.getY() * 0.5f);
-
-    pGui = gAppUI.AddGuiComponent("Micro profiler", &guiDesc);
-
-    pGui->AddWidget(CheckboxWidget("Toggle Micro Profiler", &bToggleMicroProfiler));
+		GuiDesc guiDesc = {};
+		float   dpiScale = getDpiScale().x;
+		guiDesc.mStartSize = vec2(140.0f, 320.0f);
+		guiDesc.mStartPosition = vec2(mSettings.mWidth / dpiScale - guiDesc.mStartSize.getX() * 1.1f, guiDesc.mStartSize.getY() * 0.5f);
 
 		CameraMotionParameters cmp{ 100.0f, 150.0f, 300.0f };
 		vec3                   camPos{ 48.0f, 48.0f, 20.0f };
@@ -282,13 +266,56 @@ class Compute: public IApp
 
 		pCameraController = createFpsCameraController(camPos, lookAt);
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.InitLRSticks();
-		pCameraController->setVirtualJoystick(&gVirtualJoystick);
-#endif
-
 		pCameraController->setMotionParameters(cmp);
-		InputSystem::RegisterInputEvent(cameraInputEvent);
+
+		if (!initInputSystem(pWindow))
+			return false;
+
+		// Initialize profile
+		initProfiler();
+        gGpuProfileToken = addGpuProfiler(pRenderer, pGraphicsQueue, "GpuProfiler");
+
+		// App Actions
+		InputActionDesc actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				bool capture = gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition);
+				setEnableCaptureInput(capture && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase);
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+		typedef bool (*CameraInputHandler)(InputActionContext* ctx, uint32_t index);
+		static CameraInputHandler onCameraInput = [](InputActionContext* ctx, uint32_t index)
+		{
+			if (!gAppUI.IsFocused() && *ctx->pCaptured)
+			{
+				gVirtualJoystick.OnMove(index, ctx->mPhase != INPUT_ACTION_PHASE_CANCELED, ctx->pPosition);
+				index ? pCameraController->onRotate(ctx->mFloat2) : pCameraController->onMove(ctx->mFloat2);
+			}
+			return true;
+		};
+		actionDesc = { InputBindings::FLOAT_RIGHTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 1); }, NULL, 20.0f, 200.0f, 0.5f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::FLOAT_LEFTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 0); }, NULL, 20.0f, 200.0f, 1.0f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_NORTH, [](InputActionContext* ctx) { pCameraController->resetView(); return true; } };
+		addInputAction(&actionDesc);
+
+		waitForAllResourceLoads();
+
+		DescriptorData params[1] = {};
+		params[0].pName = "uniformBlock";
+		for (uint32_t i = 0; i < gImageCount; ++i)
+		{
+			params[0].ppBuffers = &pUniformBuffer[gFrameIndex];
+			updateDescriptorSet(pRenderer, i, pDescriptorSetUniforms, 1, params);
+		}
 
 		return true;
 	}
@@ -297,15 +324,14 @@ class Compute: public IApp
 	{
 		waitQueueIdle(pGraphicsQueue);
 
+		exitInputSystem();
+
 		destroyCameraController(pCameraController);
 
-#if defined(MOBILE_PLATFORM)
 		gVirtualJoystick.Exit();
-#endif
 
 		gAppUI.Exit();
 
-		// Exit profile
 		exitProfiler();
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
@@ -317,21 +343,21 @@ class Compute: public IApp
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 			removeResource(pUniformBuffer[i]);
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
 		removeSampler(pRenderer, pSampler);
-		removeRasterizerState(pRast);
 
 		removeShader(pRenderer, pShader);
 		removeShader(pRenderer, pComputeShader);
 		removePipeline(pRenderer, pComputePipeline);
-		removeDescriptorBinder(pRenderer, pDescriptorBinder);
+		removeDescriptorSet(pRenderer, pDescriptorSetTexture);
+		removeDescriptorSet(pRenderer, pDescriptorSetComputeTexture);
+		removeDescriptorSet(pRenderer, pDescriptorSetUniforms);
 		removeRootSignature(pRenderer, pRootSignature);
 		removeRootSignature(pRenderer, pComputeRootSignature);
 
-		removeGpuProfiler(pRenderer, pGpuProfiler);
-		removeResourceLoaderInterface(pRenderer);
-		removeQueue(pGraphicsQueue);
+		exitResourceLoaderInterface(pRenderer);
+		removeQueue(pRenderer, pGraphicsQueue);
 		removeRenderer(pRenderer);
 	}
 
@@ -343,32 +369,44 @@ class Compute: public IApp
 		if (!addJuliaFractalUAV())
 			return false;
 
-		if (!gAppUI.Load(pSwapChain->ppSwapchainRenderTargets))
+		if (!gAppUI.Load(pSwapChain->ppRenderTargets))
 			return false;
 
-#if defined(MOBILE_PLATFORM)
-		if (!gVirtualJoystick.Load(pSwapChain->ppSwapchainRenderTargets[0]))
+		if (!gVirtualJoystick.Load(pSwapChain->ppRenderTargets[0]))
 			return false;
-#endif
 
-		loadProfiler(pSwapChain->ppSwapchainRenderTargets[0]);
+		loadProfilerUI(&gAppUI, mSettings.mWidth, mSettings.mHeight);
+
+		waitForAllResourceLoads();
 
 		VertexLayout vertexLayout = {};
 		vertexLayout.mAttribCount = 0;
+
+		RasterizerStateDesc rasterizerStateDesc = {};
+		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
+
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_GRAPHICS;
 		GraphicsPipelineDesc& pipelineSettings = desc.mGraphicsDesc;
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
-		pipelineSettings.pRasterizerState = pRast;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
 		pipelineSettings.pVertexLayout = &vertexLayout;
 		pipelineSettings.pRootSignature = pRootSignature;
 		pipelineSettings.pShaderProgram = pShader;
 		addPipeline(pRenderer, &desc, &pPipeline);
+
+		DescriptorData params[1] = {};
+		params[0].pName = "uTex0";
+		params[0].ppTextures = &pTextureComputeOutput;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetTexture, 1, params);
+
+		params[0].pName = "outputTexture";
+		params[0].ppTextures = &pTextureComputeOutput;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetComputeTexture, 1, params);
 
 		return true;
 	}
@@ -377,11 +415,9 @@ class Compute: public IApp
 	{
 		waitQueueIdle(pGraphicsQueue);
 
-		unloadProfiler();
+		unloadProfilerUI();
 
-#if defined(MOBILE_PLATFORM)
 		gVirtualJoystick.Unload();
-#endif
 
 		gAppUI.Unload();
 
@@ -393,10 +429,8 @@ class Compute: public IApp
 
 	void Update(float deltaTime)
 	{
-		if (InputSystem::GetBoolInput(KEY_BUTTON_X_TRIGGERED))
-		{
-			RecenterCameraView(85.0f);
-		}
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
+
 		pCameraController->update(deltaTime);
 
 		const float k_wrapAround = (float)(M_PI * 2.0);
@@ -432,29 +466,16 @@ class Compute: public IApp
 		gUniformData.mWidth = mSettings.mWidth;
 		gUniformData.mHeight = mSettings.mHeight;
 
-
-    // ProfileSetDisplayMode()
-    // TODO: need to change this better way 
-    if (bToggleMicroProfiler != bPrevToggleMicroProfiler)
-    {
-      Profile& S = *ProfileGet();
-      int nValue = bToggleMicroProfiler ? 1 : 0;
-      nValue = nValue >= 0 && nValue < P_DRAW_SIZE ? nValue : S.nDisplay;
-      S.nDisplay = nValue;
-
-      bPrevToggleMicroProfiler = bToggleMicroProfiler;
-    }
-
-    /************************************************************************/
-    // Update GUI
-    /************************************************************************/
-    gAppUI.Update(deltaTime);
+		/************************************************************************/
+		// Update GUI
+		/************************************************************************/
+		gAppUI.Update(deltaTime);
 	}
 
 	void Draw()
 	{
 		acquireNextImage(pRenderer, pSwapChain, pImageAcquiredSemaphore, NULL, &gFrameIndex);
-		RenderTarget* pRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
+		RenderTarget* pRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 		Semaphore*    pRenderCompleteSemaphore = pRenderCompleteSemaphores[gFrameIndex];
 		Fence*        pRenderCompleteFence = pRenderCompleteFences[gFrameIndex];
 
@@ -475,83 +496,83 @@ class Compute: public IApp
 		Cmd* cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);
 
-		cmdBeginGpuFrameProfile(cmd, pGpuProfiler);
+		cmdBeginGpuFrameProfile(cmd, gGpuProfileToken);
 
-		BufferUpdateDesc cbvUpdate = { pUniformBuffer[gFrameIndex], &gUniformData };
-		updateResource(&cbvUpdate);
+		BufferUpdateDesc cbvUpdate = { pUniformBuffer[gFrameIndex] };
+		beginUpdateResource(&cbvUpdate);
+		*(UniformBlock*)cbvUpdate.pMappedData = gUniformData;
+		endUpdateResource(&cbvUpdate, NULL);
 
-		const uint32_t* pThreadGroupSize = pComputeShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+		const uint32_t* pThreadGroupSize = pComputeShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Compute Pass", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Compute Pass");
 
 		// Compute Julia 4D
 		cmdBindPipeline(cmd, pComputePipeline);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetComputeTexture);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetUniforms);
 
-		DescriptorData params[2] = {};
-		params[0].pName = "uniformBlock";
-		params[0].ppBuffers = &pUniformBuffer[gFrameIndex];
-		params[1].pName = "outputTexture";
-		params[1].ppTextures = &pTextureComputeOutput;
-		cmdBindDescriptors(cmd, pDescriptorBinder, pComputeRootSignature, 2, params);
-
-		uint32_t groupCountX = (pTextureComputeOutput->mDesc.mWidth + pThreadGroupSize[0] - 1) / pThreadGroupSize[0];
-		uint32_t groupCountY = (pTextureComputeOutput->mDesc.mHeight + pThreadGroupSize[1] - 1) / pThreadGroupSize[1];
+		uint32_t groupCountX = (mSettings.mWidth + pThreadGroupSize[0] - 1) / pThreadGroupSize[0];
+		uint32_t groupCountY = (mSettings.mHeight + pThreadGroupSize[1] - 1) / pThreadGroupSize[1];
 		cmdDispatch(cmd, groupCountX, groupCountY, pThreadGroupSize[2]);
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 		TextureBarrier barriers[] = {
-			{ pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
 			{ pTextureComputeOutput, RESOURCE_STATE_SHADER_RESOURCE },
 		};
-		cmdResourceBarrier(cmd, 0, NULL, 2, barriers, false);
+		RenderTargetBarrier rtBarriers[] = {
+			{ pRenderTarget, RESOURCE_STATE_RENDER_TARGET },
+		};
+		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, 1, rtBarriers);
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)mSettings.mWidth, (float)mSettings.mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, mSettings.mWidth, mSettings.mHeight);
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Draw Pass", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Draw Pass");
 		// Draw computed results
 		cmdBindPipeline(cmd, pPipeline);
-		params[0].pName = "uTex0";
-		params[0].ppTextures = &pTextureComputeOutput;
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignature, 1, params);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetTexture);
 
 		cmdDraw(cmd, 3, 0);
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
-		gTimer.GetUSec(true);
-
-#if defined(MOBILE_PLATFORM)
 		gVirtualJoystick.Draw(cmd, { 1.0f, 1.0f, 1.0f, 1.0f });
-#endif
 
-		gAppUI.DrawText(
-			cmd, float2(8, 15), eastl::string().sprintf("CPU %f ms", gTimer.GetUSecAverage() / 1000.0f).c_str(), &gFrameTimeDraw);
-
+        cmdDrawCpuProfile(cmd, float2(8, 15), &gFrameTimeDraw);
 #if !defined(__ANDROID__)
-		gAppUI.DrawText(
-			cmd, float2(8, 40), eastl::string().sprintf("GPU %f ms", (float)pGpuProfiler->mCumulativeTime * 1000.0f).c_str(),
-			&gFrameTimeDraw);
-		gAppUI.DrawDebugGpuProfile(cmd, float2(8, 65), pGpuProfiler, NULL);
+        cmdDrawGpuProfile(cmd, float2(8, 40), gGpuProfileToken);
 #endif
 
-    gAppUI.Gui(pGui);
-
-    cmdDrawProfiler(cmd);
+        cmdDrawProfilerUI();
 		gAppUI.Draw(cmd);
 
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
-		barriers[0] = { pRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		barriers[1] = { pTextureComputeOutput, RESOURCE_STATE_UNORDERED_ACCESS };
-		cmdResourceBarrier(cmd, 0, NULL, 2, barriers, true);
+		rtBarriers[0] = { pRenderTarget, RESOURCE_STATE_PRESENT };
+		barriers[0] = { pTextureComputeOutput, RESOURCE_STATE_UNORDERED_ACCESS };
+		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, 1, rtBarriers);
 
-		cmdEndGpuFrameProfile(cmd, pGpuProfiler);
+		cmdEndGpuFrameProfile(cmd, gGpuProfileToken);
 		endCmd(cmd);
 
-		queueSubmit(pGraphicsQueue, 1, &cmd, pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1, &pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = &cmd;
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 		flipProfiler();
 	}
 
@@ -566,7 +587,6 @@ class Compute: public IApp
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
 		swapChainDesc.mEnableVsync = false;
 		::addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);
@@ -584,32 +604,16 @@ class Compute: public IApp
 		desc.mDepth = 1;
 		desc.mArraySize = 1;
 		desc.mMipLevels = 1;
-		desc.mFormat = ImageFormat::RGBA8;
+		desc.mFormat = TinyImageFormat_R8G8B8A8_UNORM;
 		desc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		desc.mSampleCount = SAMPLE_COUNT_1;
 		desc.mHostVisible = false;
 		desc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		textureDesc.pDesc = &desc;
 		textureDesc.ppTexture = &pTextureComputeOutput;
-		addResource(&textureDesc);
+		addResource(&textureDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		return pTextureComputeOutput != NULL;
-	}
-
-	void RecenterCameraView(float maxDistance, vec3 lookAt = vec3(0))
-	{
-		vec3 p = pCameraController->getViewPosition();
-		vec3 d = p - lookAt;
-
-		float lenSqr = lengthSqr(d);
-		if (lenSqr > (maxDistance * maxDistance))
-		{
-			d *= (maxDistance / sqrtf(lenSqr));
-		}
-
-		p = d + lookAt;
-		pCameraController->moveTo(p);
-		pCameraController->lookAt(lookAt);
 	}
 
 	void Interpolate(float m[4], float t, float a[4], float b[4])
@@ -665,12 +669,6 @@ class Compute: public IApp
 
 			RandomColor(b);
 		}
-	}
-
-	static bool cameraInputEvent(const ButtonData* data)
-	{
-		pCameraController->onInputEvent(data);
-		return true;
 	}
 };
 

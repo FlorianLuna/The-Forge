@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -29,12 +29,8 @@ layout (location = 0) in float textcoord;
 
 layout (location = 0) out vec4 oColor;
 
-layout (set=0, binding=11) uniform texture1D uTex0[5];
-layout (set=0, binding=3) uniform sampler uSampler0;
-
-layout (set=0, binding=0) uniform uniformBlock {
-	uniform mat4 viewProject;
-};
+layout (UPDATE_FREQ_NONE, binding=11) uniform texture1D uTex0[5];
+layout (UPDATE_FREQ_NONE, binding=3) uniform sampler uSampler0;
 
 layout(push_constant) uniform pushConstantBlock
 {

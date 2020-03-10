@@ -5,7 +5,7 @@
 
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -40,12 +40,12 @@ uint calculateOutputVBID(bool opaque, uint drawID, uint primitiveID)
 	return (opaque) ? drawID_primID : (1 << 31) | drawID_primID;
 }
 
-layout(set = 0, binding = 1) restrict readonly buffer indirectMaterialBuffer
+layout(UPDATE_FREQ_PER_FRAME, binding = 1) restrict readonly buffer indirectMaterialBuffer
 {
 	uint indirectMaterialBufferData[];
 };
-layout(set = 0, binding = 2) uniform sampler textureFilter;
-layout(set = 0, binding = 3) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 2) uniform sampler textureFilter;
+layout(UPDATE_FREQ_NONE, binding = 3) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
 
 layout(location = 0) in vec2 iTexCoord;
 layout(location = 1) in flat uint iDrawId;

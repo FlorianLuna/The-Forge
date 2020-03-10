@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -81,8 +81,8 @@ struct AsteroidSimulation
 {
 	public:
 	void Init(uint32_t rngSeed, uint32_t numAsteroids, uint32_t numMeshes, uint32_t vertexCountPerMesh, uint32_t textureCount);
-
-	void update(float deltaTime, unsigned startIdx, unsigned endIdx, const vec3& cameraPosition);
+	void Exit();
+	void Update(float deltaTime, unsigned startIdx, unsigned endIdx, const vec3& cameraPosition);
 
 	eastl::vector<AsteroidStatic>  asteroidsStatic;
 	eastl::vector<AsteroidDynamic> asteroidsDynamic;

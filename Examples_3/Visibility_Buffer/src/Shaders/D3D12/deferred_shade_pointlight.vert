@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -36,7 +36,7 @@ struct VSOutput
     float3 lightPos : TEXCOORD1;
 };
 
-ConstantBuffer<PerFrameConstants> uniforms : register(b0);
+ConstantBuffer<PerFrameConstants> uniforms : register(b0, UPDATE_FREQ_PER_FRAME);
 StructuredBuffer<LightData> lights : register(t1);
 
 VSOutput main(VSInput input, uint instanceId : SV_InstanceID)
@@ -44,6 +44,6 @@ VSOutput main(VSInput input, uint instanceId : SV_InstanceID)
     VSOutput output;
     output.lightPos = lights[instanceId].position;
     output.color = lights[instanceId].color;
-    output.position = mul(uniforms.transform[VIEW_CAMERA].mvp, float4((input.position.xyz * LIGHT_SIZE) + output.lightPos, 1));
+    output.position = mul(uniforms.transform[VIEW_CAMERA].vp, float4((input.position.xyz * LIGHT_SIZE) + output.lightPos, 1));
     return output;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -27,7 +27,7 @@
 
 #define MAX_INSTANCES 815
 
-cbuffer uniformBlock : register(b0, space3)
+cbuffer uniformBlock : register(b0, UPDATE_FREQ_PER_DRAW)
 {
 	float4x4 mvp;
 

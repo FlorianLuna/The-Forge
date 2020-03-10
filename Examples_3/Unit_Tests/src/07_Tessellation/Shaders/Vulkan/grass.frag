@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -26,26 +26,6 @@
 
 #extension GL_ARB_separate_shader_objects : enable
 
-layout(set = 0, binding = 0) uniform GrassUniformBlock {
-
-  	mat4 world;
-	mat4 view;	
-	mat4 invView;
-	mat4 proj;
-	mat4 viewProj;
-
-	float deltaTime;
-	float totalTime;
-	
-	int gWindMode;
-	int gMaxTessellationLevel;
-
- 	float windSpeed;
- 	float windWidth;
- 	float windStrength;
-
-};
-
 layout(location = 0) in vec4 Position;
 layout(location = 1) in vec3 Normal;
 layout(location = 2) in vec3 WindDirection;
@@ -53,7 +33,8 @@ layout(location = 3) in vec2 UV;
 
 layout(location = 0) out vec4 outColor;
 
-void main() {
+void main()
+{
    	vec3 upperColor = vec3(0.0,0.9,0.1);
 	vec3 lowerColor = vec3(0.0,0.2,0.1);
 

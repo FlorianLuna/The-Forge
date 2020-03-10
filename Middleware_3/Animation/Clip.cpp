@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -24,7 +24,7 @@
 
 #include "Clip.h"
 
-void Clip::Initialize(const char* animationFile, Rig* rig) { LoadClip(animationFile); }
+void Clip::Initialize(const Path* animationPath, Rig* rig) { LoadClip(animationPath); }
 
 void Clip::Destroy() { mAnimation.Deallocate(); }
 
@@ -44,19 +44,27 @@ bool Clip::Sample(ozz::animation::SamplingCache* cacheInput, ozz::Range<SoaTrans
 	return true;
 }
 
-bool Clip::LoadClip(const char* fileName)
+bool Clip::LoadClip(const Path* animationPath)
 {
-	ozz::io::File file(fileName, "rb");
+	ozz::io::File file(animationPath, FM_READ_BINARY);
 	if (!file.opened())
 	{
-		ErrorMsg("Cannot open file ");
+		LOGF(eERROR, "Cannot open file ");
 		return false;
 	}
 
-	ozz::io::IArchive archive(&file);
+	// Archive is doing a lot of freads from disk which is slow on some platforms and also generally not good
+	// So we just read the entire file once into a mem stream so the freads from IArchive are actually
+	// only reading from system memory instead of disk or network
+	ozz::io::MemoryStream memStream;
+	memStream.Resize(file.Size());
+	memStream.end_ = (int)file.Size();
+	file.Read(memStream.buffer_, file.Size());
+
+	ozz::io::IArchive archive(&memStream);
 	if (!archive.TestTag<ozz::animation::Animation>())
 	{
-		ErrorMsg("Archive doesn't contain the expected object type.");
+		LOGF(eERROR, "Archive doesn't contain the expected object type.");
 		return false;
 	}
 

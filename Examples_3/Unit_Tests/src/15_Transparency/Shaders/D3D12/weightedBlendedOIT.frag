@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -22,7 +22,7 @@
 * under the License.
 */
 
-#include "shading.hlsl"
+#include "shading.h"
 
 struct VSOutput
 {
@@ -39,7 +39,7 @@ struct PSOutput
 	float Revealage : SV_Target1;
 };
 
-cbuffer WBOITSettings : register(b0, space1)
+cbuffer WBOITSettings : UNIT_CBV_WBOIT
 {
 	float colorResistance;	// Increase if low-coverage foreground transparents are affecting background transparent color.
 	float rangeAdjustment;	// Change to avoid saturating at the clamp bounds.

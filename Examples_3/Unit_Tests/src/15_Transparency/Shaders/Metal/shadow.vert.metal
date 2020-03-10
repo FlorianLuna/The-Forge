@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -78,13 +78,17 @@ constant Uniforms_ObjectUniformBlock & ObjectUniformBlock,constant Uniforms_Draw
 ObjectUniformBlock(ObjectUniformBlock),DrawInfoRootConstant(DrawInfoRootConstant),CameraUniform(CameraUniform) {}
 };
 
+struct VSData {
+    constant Vertex_Shader::Uniforms_ObjectUniformBlock & ObjectUniformBlock [[buffer(1)]];
+    constant Vertex_Shader::Uniforms_CameraUniform & CameraUniform [[buffer(3)]];
+};
 
 vertex Vertex_Shader::VSOutput stageMain(
-    Vertex_Shader::VSInput input [[stage_in]],
-uint InstanceID [[instance_id]],
-    constant Vertex_Shader::Uniforms_ObjectUniformBlock & ObjectUniformBlock [[buffer(1)]],
-    constant Vertex_Shader::Uniforms_DrawInfoRootConstant & DrawInfoRootConstant [[buffer(2)]],
-    constant Vertex_Shader::Uniforms_CameraUniform & CameraUniform [[buffer(3)]])
+    Vertex_Shader::VSInput input            [[stage_in]],
+    uint InstanceID                         [[instance_id]],
+    constant VSData& vsData                 [[buffer(UPDATE_FREQ_PER_FRAME)]],
+    constant Vertex_Shader::Uniforms_DrawInfoRootConstant & DrawInfoRootConstant [[buffer(UPDATE_FREQ_USER)]]
+)
 {
     Vertex_Shader::VSInput input0;
     input0.Position = input.Position;
@@ -92,9 +96,6 @@ uint InstanceID [[instance_id]],
     input0.UV = input.UV;
     uint InstanceID0;
     InstanceID0 = InstanceID;
-    Vertex_Shader main(
-    ObjectUniformBlock,
-    DrawInfoRootConstant,
-    CameraUniform);
+    Vertex_Shader main(vsData.ObjectUniformBlock, DrawInfoRootConstant, vsData.CameraUniform);
     return main.main(input0, InstanceID0);
 }

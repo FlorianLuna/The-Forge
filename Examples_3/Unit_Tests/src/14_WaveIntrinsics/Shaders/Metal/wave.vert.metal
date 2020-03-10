@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -60,15 +60,19 @@ constant Uniforms_SceneConstantBuffer & SceneConstantBuffer) :
 SceneConstantBuffer(SceneConstantBuffer) {}
 };
 
+struct VSDataPerFrame {
+    constant Vertex_Shader::Uniforms_SceneConstantBuffer& SceneConstantBuffer [[id(0)]];
+};
 
 vertex Vertex_Shader::PSInput stageMain(
-	Vertex_Shader::VSInput vsInput[ [stage_in]],
-    constant Vertex_Shader::Uniforms_SceneConstantBuffer & SceneConstantBuffer [[buffer(1)]])
+	Vertex_Shader::VSInput vsInput [[stage_in]],
+    constant VSDataPerFrame& vsDataPerFrame     [[buffer(UPDATE_FREQ_PER_FRAME)]]
+)
 {
     float3 position0;
     position0 = vsInput.position;
     float4 color0;
     color0 = vsInput.color;
-    Vertex_Shader main(SceneConstantBuffer);
+    Vertex_Shader main(vsDataPerFrame.SceneConstantBuffer);
     return main.main(position0, color0);
 }

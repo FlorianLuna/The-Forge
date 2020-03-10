@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -41,8 +41,5 @@ float4 main(DS_OUTPUT In) : SV_Target
 
 	float3 mixedColor = lerp(lowerColor, upperColor, In.UV.y);
 
-	
 	return float4(mixedColor*NoL, 1.0);
-
-
 }

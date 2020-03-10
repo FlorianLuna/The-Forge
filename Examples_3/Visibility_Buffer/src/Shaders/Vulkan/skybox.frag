@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -31,8 +31,8 @@
 layout(location = 0) in vec3 fragInput_POSITION;
 layout(location = 0) out vec4 rast_FragData0; 
 
-layout(set = 0, binding = 0) uniform textureCube skyboxTex;
-layout(set = 0, binding = 1) uniform sampler skyboxSampler;
+layout(UPDATE_FREQ_NONE, binding = 0) uniform textureCube skyboxTex;
+layout(UPDATE_FREQ_NONE, binding = 1) uniform sampler skyboxSampler;
 struct VSinput
 {
     vec4 Position;

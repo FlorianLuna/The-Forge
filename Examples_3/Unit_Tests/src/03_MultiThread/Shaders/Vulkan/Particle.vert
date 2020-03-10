@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -26,7 +26,8 @@
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
-layout (set=0, binding=0) uniform uniformBlock{
+layout (UPDATE_FREQ_PER_FRAME, binding=0) uniform uniformBlock
+{
 	uniform mat4 viewProject;
 };
 

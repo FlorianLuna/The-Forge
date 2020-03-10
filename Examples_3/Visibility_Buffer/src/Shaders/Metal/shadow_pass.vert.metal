@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of TheForge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -54,12 +54,12 @@ struct IndirectDrawArguments
 
 struct VSInput
 {
-	float4 Position [[attribute(0)]];
+	float4 Position [[attribute(UNIT_VBPASS_POSITION)]];
 };
 
 vertex VSOut stageMain(
-					   VSInput input [[stage_in]],
-					   constant PerFrameConstants& uniforms             [[buffer(2)]]
+    VSInput input [[stage_in]],
+    constant PerFrameConstants& uniforms    [[buffer(UNIT_VBPASS_UNIFORMS)]]
 )
 {
 	VSOut output;

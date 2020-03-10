@@ -22,11 +22,12 @@
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\CommonShaderReflection.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\Direct3D12\Direct3D12.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\Direct3D12\Direct3D12Hooks.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\Renderer\Direct3D12\Direct3D12MemoryAllocator.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\Direct3D12\Direct3D12Raytracing.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\Direct3D12\Direct3D12ShaderReflection.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\Renderer\GpuProfiler.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\Renderer\ResourceLoader.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\D3D12MemoryAllocator\Direct3D12MemoryAllocator.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{DFAAEF2D-9A5E-475E-86BA-59529DD39CF3}</ProjectGuid>
@@ -123,6 +124,7 @@
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command>xcopy "$(SolutionDir)..\..\..\Common_3\ThirdParty\OpenSource\winpixeventruntime\bin\WinPixEventRuntime.dll" "$(TargetDir)WinPixEventRunTime.dll"* /Y</Command>
@@ -147,6 +149,7 @@
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command>xcopy "$(SolutionDir)..\..\..\Common_3\ThirdParty\OpenSource\winpixeventruntime\bin\WinPixEventRuntime.dll" "$(TargetDir)WinPixEventRunTime.dll"* /Y
@@ -183,6 +186,7 @@ xcopy "$(WindowsSDKDir)bin\$(WindowsTargetPlatformVersion)\x64\dxil.dll" "$(Targ
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command>xcopy "$(SolutionDir)..\..\..\Common_3\ThirdParty\OpenSource\winpixeventruntime\bin\WinPixEventRuntime.dll" "$(TargetDir)WinPixEventRunTime.dll"* /Y</Command>
@@ -211,6 +215,7 @@ xcopy "$(WindowsSDKDir)bin\$(WindowsTargetPlatformVersion)\x64\dxil.dll" "$(Targ
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <PostBuildEvent>
       <Command>xcopy "$(SolutionDir)..\..\..\Common_3\ThirdParty\OpenSource\winpixeventruntime\bin\WinPixEventRuntime.dll" "$(TargetDir)WinPixEventRunTime.dll"* /Y

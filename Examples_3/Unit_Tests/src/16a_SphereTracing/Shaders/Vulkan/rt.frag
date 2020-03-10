@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -26,7 +26,8 @@
 
 layout(location = 0) out vec4 outColor;
 
-layout (std140, column_major, set=0, binding=0) uniform FSConst {
+layout (std140, column_major, UPDATE_FREQ_PER_FRAME, binding=0) uniform FSConst
+{
     vec2 resolution;
     mat4 invView;
 } u_input;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -41,8 +41,8 @@ layout (location = 3) in vec4 albedo;
 
 layout (location = 0) out vec4 outColor;
 
-layout (set=0, binding=1) uniform texture2DArray uTex0;
-layout (set=0, binding=2) uniform sampler uSampler0;
+layout (UPDATE_FREQ_NONE, binding=1) uniform texture2DArray uTex0;
+layout (UPDATE_FREQ_NONE, binding=2) uniform sampler uSampler0;
 
 void main()
 {

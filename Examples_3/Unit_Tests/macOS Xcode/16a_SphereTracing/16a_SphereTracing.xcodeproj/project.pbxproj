@@ -34,8 +34,6 @@
 		97CF9247216FCDDB0036A63B /* Skybox_top3.ktx in CopyFiles */ = {isa = PBXBuildFile; fileRef = 28A5AB7F201F3A35000E571F /* Skybox_top3.ktx */; };
 		B2087DD321421A13006F372D /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2087DD121421A13006F372D /* MetalKit.framework */; };
 		B2087DD421421A13006F372D /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B2087DD221421A13006F372D /* Metal.framework */; };
-		B211BA26219CBD3200101502 /* fstri.vert.metal in Resources */ = {isa = PBXBuildFile; fileRef = B2E8E64F219C9E1E00FDC78B /* fstri.vert.metal */; };
-		B211BA27219CBD3200101502 /* rt.frag.metal in Resources */ = {isa = PBXBuildFile; fileRef = B2E8E64E219C9E1E00FDC78B /* rt.frag.metal */; };
 		B211BA28219CBD9700101502 /* fstri.vert.metal in Copy Files */ = {isa = PBXBuildFile; fileRef = B2E8E64F219C9E1E00FDC78B /* fstri.vert.metal */; };
 		B211BA29219CBD9700101502 /* rt.frag.metal in Copy Files */ = {isa = PBXBuildFile; fileRef = B2E8E64E219C9E1E00FDC78B /* rt.frag.metal */; };
 		B21F76BE21420E7000DF2297 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B21F76BB21420E7000DF2297 /* UIKit.framework */; };
@@ -70,7 +68,7 @@
 			remoteGlobalIDString = 5C5582E021413D180019960B;
 			remoteInfo = "The-Forge";
 		};
-		5C55833F21413EFB0019960B /* PBXContainerItemProxy */ = {
+		E958921E23416E1400B68D6A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 5C55833721413EE30019960B /* The-Forge.xcodeproj */;
 			proxyType = 1;
@@ -140,10 +138,10 @@
 		28A5AB89201F3A77000E571F /* TitilliumText */ = {isa = PBXFileReference; lastKnownFileType = folder; name = TitilliumText; path = ../../../UnitTestResources/Fonts/TitilliumText; sourceTree = "<group>"; };
 		5B17816522A5C80B00991DCB /* profile.frag.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; name = profile.frag.metal; path = ../../src/16a_SphereTracing/Shaders/Metal/profile.frag.metal; sourceTree = "<group>"; };
 		5B17816622A5C80B00991DCB /* profile.vert.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; name = profile.vert.metal; path = ../../src/16a_SphereTracing/Shaders/Metal/profile.vert.metal; sourceTree = "<group>"; };
-		5C172F32214147700074EE71 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = AppDelegate.m; path = ../../../../../Common_3/OS/macOS/AppDelegate.m; sourceTree = "<group>"; };
-		5C172F33214147700074EE71 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = ../../../../../Common_3/OS/macOS/AppDelegate.h; sourceTree = "<group>"; };
-		5C17300321414D110074EE71 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = ../../../../../Common_3/OS/iOS/AppDelegate.h; sourceTree = "<group>"; };
-		5C17300421414D110074EE71 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = AppDelegate.m; path = ../../../../../Common_3/OS/iOS/AppDelegate.m; sourceTree = "<group>"; };
+		5C172F32214147700074EE71 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = AppDelegate.m; path = ../../../../../Common_3/OS/Darwin/macOSAppDelegate.m; sourceTree = "<group>"; };
+		5C172F33214147700074EE71 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = ../../../../../Common_3/OS/Darwin/macOSAppDelegate.h; sourceTree = "<group>"; };
+		5C17300321414D110074EE71 /* AppDelegate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AppDelegate.h; path = ../../../../../Common_3/OS/Darwin/iOSAppDelegate.h; sourceTree = "<group>"; };
+		5C17300421414D110074EE71 /* AppDelegate.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = AppDelegate.m; path = ../../../../../Common_3/OS/Darwin/iOSAppDelegate.m; sourceTree = "<group>"; };
 		5C55833721413EE30019960B /* The-Forge.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = "The-Forge.xcodeproj"; path = "../The-Forge/The-Forge.xcodeproj"; sourceTree = "<group>"; };
 		5CA80F2221F0A0A700C99983 /* fontstash3D.vert.metal */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; name = fontstash3D.vert.metal; path = ../../../../Middleware_3/Text/Shaders/Metal/fontstash3D.vert.metal; sourceTree = "<group>"; };
 		5CA80F2321F0A0A700C99983 /* fontstash2D.vert.metal */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; name = fontstash2D.vert.metal; path = ../../../../Middleware_3/Text/Shaders/Metal/fontstash2D.vert.metal; sourceTree = "<group>"; };
@@ -160,8 +158,8 @@
 		B21F76BB21420E7000DF2297 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS12.0.sdk/System/Library/Frameworks/UIKit.framework; sourceTree = DEVELOPER_DIR; };
 		B21F76BC21420E7000DF2297 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS12.0.sdk/System/Library/Frameworks/MetalKit.framework; sourceTree = DEVELOPER_DIR; };
 		B21F76BD21420E7000DF2297 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS12.0.sdk/System/Library/Frameworks/Metal.framework; sourceTree = DEVELOPER_DIR; };
-		B2E8E64E219C9E1E00FDC78B /* rt.frag.metal */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; name = rt.frag.metal; path = ../../../src/16a_SphereTracing/Shaders/Metal/rt.frag.metal; sourceTree = "<group>"; };
-		B2E8E64F219C9E1E00FDC78B /* fstri.vert.metal */ = {isa = PBXFileReference; explicitFileType = text; fileEncoding = 4; name = fstri.vert.metal; path = ../../../src/16a_SphereTracing/Shaders/Metal/fstri.vert.metal; sourceTree = "<group>"; };
+		B2E8E64E219C9E1E00FDC78B /* rt.frag.metal */ = {isa = PBXFileReference; explicitFileType = sourcecode.metal; fileEncoding = 4; name = rt.frag.metal; path = ../../../src/16a_SphereTracing/Shaders/Metal/rt.frag.metal; sourceTree = "<group>"; };
+		B2E8E64F219C9E1E00FDC78B /* fstri.vert.metal */ = {isa = PBXFileReference; explicitFileType = sourcecode.metal; fileEncoding = 4; name = fstri.vert.metal; path = ../../../src/16a_SphereTracing/Shaders/Metal/fstri.vert.metal; sourceTree = "<group>"; };
 		C95132ED2010E68A002E584B /* 16a_SphereTracing_iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 16a_SphereTracing_iOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C95132FE2010E68A002E584B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C95133012010E68A002E584B /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -169,6 +167,8 @@
 		D204ED801F348A5B005F2CEA /* 16a_SphereTracing.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.objcpp; fileEncoding = 4; name = 16a_SphereTracing.cpp; path = ../../src/16a_SphereTracing/16a_SphereTracing.cpp; sourceTree = "<group>"; };
 		D28782EF1F0A7F52004DC624 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = ../02_Compute/02_Compute/Assets.xcassets; sourceTree = SOURCE_ROOT; };
 		D2E631E01F3472DF005BFBA7 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.xib; name = Base; path = Base.lproj/MainMenu.xib; sourceTree = "<group>"; };
+		E9A438D4233DC25A005BF1C7 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = usr/lib/libbz2.tbd; sourceTree = SDKROOT; };
+		E9A438D6233DC263005BF1C7 /* libbz2.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbz2.tbd; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.0.sdk/usr/lib/libbz2.tbd; sourceTree = DEVELOPER_DIR; };
 		EA463C8B1EF81E8F005AC8C7 /* 16a_SphereTracing.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = 16a_SphereTracing.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EADF9D661EFD160E00B2008B /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ../02_Compute/02_Compute/Info.plist; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -238,6 +238,8 @@
 		28A5ABEA201F482F000E571F /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				E9A438D4233DC25A005BF1C7 /* libbz2.tbd */,
+				E9A438D6233DC263005BF1C7 /* libbz2.tbd */,
 				650CCC7A2223CDA0003533D9 /* MetalPerformanceShaders.framework */,
 				650CCC7C2223CDB6003533D9 /* MetalPerformanceShaders.framework */,
 				B21F76BD21420E7000DF2297 /* Metal.framework */,
@@ -359,7 +361,7 @@
 			buildRules = (
 			);
 			dependencies = (
-				5C55834021413EFB0019960B /* PBXTargetDependency */,
+				E958921F23416E1400B68D6A /* PBXTargetDependency */,
 			);
 			name = 16a_SphereTracing;
 			productName = 02_Texture;
@@ -434,10 +436,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				B211BA26219CBD3200101502 /* fstri.vert.metal in Resources */,
 				C95133022010E68A002E584B /* LaunchScreen.storyboard in Resources */,
 				C95132FF2010E68A002E584B /* Assets.xcassets in Resources */,
-				B211BA27219CBD3200101502 /* rt.frag.metal in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -479,10 +479,10 @@
 			name = "The-Forge_iOS";
 			targetProxy = 5C172FFE21414CFA0074EE71 /* PBXContainerItemProxy */;
 		};
-		5C55834021413EFB0019960B /* PBXTargetDependency */ = {
+		E958921F23416E1400B68D6A /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = "The-Forge";
-			targetProxy = 5C55833F21413EFB0019960B /* PBXContainerItemProxy */;
+			targetProxy = E958921E23416E1400B68D6A /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -534,7 +534,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				PRODUCT_BUNDLE_IDENTIFIER = "Conffeti.-1-Transformations-iOS";
+				PRODUCT_BUNDLE_IDENTIFIER = "Conffeti.-16a-SphereTracing-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRIP_PNG_TEXT = NO;
@@ -571,7 +571,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
-				PRODUCT_BUNDLE_IDENTIFIER = "Conffeti.-1-Transformations-iOS";
+				PRODUCT_BUNDLE_IDENTIFIER = "Conffeti.-16a-SphereTracing-iOS";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				STRIP_PNG_TEXT = NO;
@@ -705,6 +705,7 @@
 					METAL,
 					_DEBUG,
 					USE_MEMORY_TRACKING,
+					ZIP_STATIC,
 				);
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = "$(SRCROOT)/../02_Compute/02_Compute/Info.plist";
@@ -714,11 +715,16 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
 				ONLY_ACTIVE_ARCH = NO;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.confetti.Unit-Tests.01-Transformations";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.confetti.Unit-Tests.-16a-SphereTracing";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "";
 				SYSTEM_HEADER_SEARCH_PATHS = "";
+				USER_HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/libzip-1.1.2/lib",
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/assimp/4.1.0/Apple",
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/assimp/4.1.0/contrib/zlib",
+				);
 			};
 			name = Debug;
 		};
@@ -730,7 +736,10 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/../Bin/$(CONFIGURATION)/";
 				DEVELOPMENT_TEAM = BT67ZY58A8;
-				GCC_PREPROCESSOR_DEFINITIONS = METAL;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					METAL,
+					ZIP_STATIC,
+				);
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = "$(SRCROOT)/../02_Compute/02_Compute/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -739,11 +748,16 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 10.14;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.confetti.Unit-Tests.01-Transformations";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.confetti.Unit-Tests.-16a-SphereTracing";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
 				SYSTEM_FRAMEWORK_SEARCH_PATHS = "";
 				SYSTEM_HEADER_SEARCH_PATHS = "";
+				USER_HEADER_SEARCH_PATHS = (
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/libzip-1.1.2/lib",
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/assimp/4.1.0/Apple",
+					"$(PROJECT_DIR)/../../../../Common_3/ThirdParty/OpenSource/assimp/4.1.0/contrib/zlib",
+				);
 			};
 			name = Release;
 		};

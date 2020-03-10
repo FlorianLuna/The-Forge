@@ -11,12 +11,13 @@
 #include "HLSLParser.h"
 #include "HLSLTree.h"
 
-//#include "Engine/String.h"
-//#include "Engine/Log.h"
 #include "Engine.h"
+#include "StringLibrary.h"
 
 #include <stdarg.h>
 #include <string.h>
+#include "../../../EASTL/string_hash_map.h"
+#include "../../../EASTL/sort.h"
 
 static const HLSLType kFloatType(HLSLBaseType_Float);
 static const HLSLType kUintType(HLSLBaseType_Uint);
@@ -35,83 +36,78 @@ const char* GLSLGenerator::s_reservedWord[] =
         "dFdy",
     };
 
-static const char* GetTypeName(const HLSLType& type)
+const char* GetBaseTypeName(const HLSLBaseType& baseType)
 {
-	HLSLBaseType baseType = type.baseType;
+	switch (baseType)
+	{
+	case HLSLBaseType_Void:				return "void";
+	case HLSLBaseType_Float:			return "float";
+	case HLSLBaseType_Float1x2:			return "mat1x2";
+	case HLSLBaseType_Float1x3:			return "mat1x3";
+	case HLSLBaseType_Float1x4:			return "mat1x4";
+	case HLSLBaseType_Float2:			return "vec2";
+	case HLSLBaseType_Float2x2:			return "mat2";
+	case HLSLBaseType_Float2x3:			return "mat2x3";
+	case HLSLBaseType_Float2x4:			return "mat2x4";
+	case HLSLBaseType_Float3:			return "vec3";
+	case HLSLBaseType_Float3x2:			return "mat3x2";
+	case HLSLBaseType_Float3x3:			return "mat3";
+	case HLSLBaseType_Float3x4:			return "mat3x4";
+	case HLSLBaseType_Float4:			return "vec4";
+	case HLSLBaseType_Float4x2:			return "mat4x2";
+	case HLSLBaseType_Float4x3:			return "mat4x3";
+	case HLSLBaseType_Float4x4:			return "mat4";
 
-	if (type.baseType == HLSLBaseType_Unknown)
-		baseType = type.elementType;
+	case HLSLBaseType_Half:				return "mediump float";
+	case HLSLBaseType_Half1x2:			return "mediump mat1x2";
+	case HLSLBaseType_Half1x3:			return "mediump mat1x3";
+	case HLSLBaseType_Half1x4:			return "mediump mat1x4";
+	case HLSLBaseType_Half2:			return "mediump vec2";
+	case HLSLBaseType_Half2x2:			return "mediump mat2";
+	case HLSLBaseType_Half2x3:			return "mediump mat2x3";
+	case HLSLBaseType_Half2x4:        return "mediump mat2x4";
+	case HLSLBaseType_Half3:       return "mediump vec3";
+	case HLSLBaseType_Half3x2:        return "mediump mat3x2";
+	case HLSLBaseType_Half3x3:        return "mediump mat3";
+	case HLSLBaseType_Half3x4:        return "mediump mat3x4";
+	case HLSLBaseType_Half4:       return "mediump vec4";
+	case HLSLBaseType_Half4x2:        return "mediump mat4x2";
+	case HLSLBaseType_Half4x3:        return "mediump mat4x3";
+	case HLSLBaseType_Half4x4:        return "mediump mat4";
 
-    switch (baseType)
-    {
-	case HLSLBaseType_Void:         return "void";
-	case HLSLBaseType_Float:        return "float";
-	case HLSLBaseType_Float1x2:        return "mat1x2";
-	case HLSLBaseType_Float1x3:        return "mat1x3";
-	case HLSLBaseType_Float1x4:        return "mat1x4";
-	case HLSLBaseType_Float2:       return "vec2";
-	case HLSLBaseType_Float2x2:        return "mat2";
-	case HLSLBaseType_Float2x3:        return "mat2x3";
-	case HLSLBaseType_Float2x4:        return "mat2x4";
-	case HLSLBaseType_Float3:       return "vec3";
-	case HLSLBaseType_Float3x2:        return "mat3x2";
-	case HLSLBaseType_Float3x3:        return "mat3";
-	case HLSLBaseType_Float3x4:        return "mat3x4";
-	case HLSLBaseType_Float4:       return "vec4";
-	case HLSLBaseType_Float4x2:        return "mat4x2";
-	case HLSLBaseType_Float4x3:        return "mat4x3";
-	case HLSLBaseType_Float4x4:        return "mat4";
+	case HLSLBaseType_Min16Float:         return "mediump float";
+	case HLSLBaseType_Min16Float1x2:        return "mediump mat1x2";
+	case HLSLBaseType_Min16Float1x3:        return "mediump mat1x3";
+	case HLSLBaseType_Min16Float1x4:        return "mediump mat1x4";
+	case HLSLBaseType_Min16Float2:       return "mediump vec2";
+	case HLSLBaseType_Min16Float2x2:        return "mediump mat2";
+	case HLSLBaseType_Min16Float2x3:        return "mediump mat2x3";
+	case HLSLBaseType_Min16Float2x4:        return "mediump mat2x4";
+	case HLSLBaseType_Min16Float3:       return "mediump vec3";
+	case HLSLBaseType_Min16Float3x2:        return "mediump mat3x2";
+	case HLSLBaseType_Min16Float3x3:        return "mediump mat3";
+	case HLSLBaseType_Min16Float3x4:        return "mediump mat3x4";
+	case HLSLBaseType_Min16Float4:       return "mediump vec4";
+	case HLSLBaseType_Min16Float4x2:        return "mediump mat4x2";
+	case HLSLBaseType_Min16Float4x3:        return "mediump mat4x3";
+	case HLSLBaseType_Min16Float4x4:        return "mediump mat4";
 
-	case HLSLBaseType_Half:         return "float";
-	case HLSLBaseType_Half1x2:        return "mat1x2";
-	case HLSLBaseType_Half1x3:        return "mat1x3";
-	case HLSLBaseType_Half1x4:        return "mat1x4";
-	case HLSLBaseType_Half2:       return "vec2";
-	case HLSLBaseType_Half2x2:        return "mat2";
-	case HLSLBaseType_Half2x3:        return "mat2x3";
-	case HLSLBaseType_Half2x4:        return "mat2x4";
-	case HLSLBaseType_Half3:       return "vec3";
-	case HLSLBaseType_Half3x2:        return "mat3x2";
-	case HLSLBaseType_Half3x3:        return "mat3";
-	case HLSLBaseType_Half3x4:        return "mat3x4";
-	case HLSLBaseType_Half4:       return "vec4";
-	case HLSLBaseType_Half4x2:        return "mat4x2";
-	case HLSLBaseType_Half4x3:        return "mat4x3";
-	case HLSLBaseType_Half4x4:        return "mat4";
-
-	case HLSLBaseType_Min16Float:        return "min16float";
-	case HLSLBaseType_Min16Float1x2:        return "min16float1x2";
-	case HLSLBaseType_Min16Float1x3:        return "min16float1x3";
-	case HLSLBaseType_Min16Float1x4:        return "min16float1x4";
-	case HLSLBaseType_Min16Float2:       return "min16float2";
-	case HLSLBaseType_Min16Float2x2:        return "min16float2x2";
-	case HLSLBaseType_Min16Float2x3:        return "min16float2x3";
-	case HLSLBaseType_Min16Float2x4:        return "min16float2x4";
-	case HLSLBaseType_Min16Float3:       return "min16float3";
-	case HLSLBaseType_Min16Float3x2:        return "min16float3x2";
-	case HLSLBaseType_Min16Float3x3:        return "min16float3x3";
-	case HLSLBaseType_Min16Float3x4:        return "min16float3x4";
-	case HLSLBaseType_Min16Float4:       return "min16float4";
-	case HLSLBaseType_Min16Float4x2:        return "min16float4x2";
-	case HLSLBaseType_Min16Float4x3:        return "min16float4x3";
-	case HLSLBaseType_Min16Float4x4:        return "min16float4x4";
-
-	case HLSLBaseType_Min10Float:        return "min10float";
-	case HLSLBaseType_Min10Float1x2:        return "min10float1x2";
-	case HLSLBaseType_Min10Float1x3:        return "min10float1x3";
-	case HLSLBaseType_Min10Float1x4:        return "min10float1x4";
-	case HLSLBaseType_Min10Float2:       return "min10float2";
-	case HLSLBaseType_Min10Float2x2:        return "min10float2x2";
-	case HLSLBaseType_Min10Float2x3:        return "min10float2x3";
-	case HLSLBaseType_Min10Float2x4:        return "min10float2x4";
-	case HLSLBaseType_Min10Float3:       return "min10float3";
-	case HLSLBaseType_Min10Float3x2:        return "min10float3x2";
-	case HLSLBaseType_Min10Float3x3:        return "min10float3x3";
-	case HLSLBaseType_Min10Float3x4:        return "min10float3x4";
-	case HLSLBaseType_Min10Float4:       return "min10float4";
-	case HLSLBaseType_Min10Float4x2:        return "min10float4x2";
-	case HLSLBaseType_Min10Float4x3:        return "min10float4x3";
-	case HLSLBaseType_Min10Float4x4:        return "min10float4x4";
+	case HLSLBaseType_Min10Float:         return "lowp float";
+	case HLSLBaseType_Min10Float1x2:        return "lowp mat1x2";
+	case HLSLBaseType_Min10Float1x3:        return "lowp mat1x3";
+	case HLSLBaseType_Min10Float1x4:        return "lowp mat1x4";
+	case HLSLBaseType_Min10Float2:       return "lowp vec2";
+	case HLSLBaseType_Min10Float2x2:        return "lowp mat2";
+	case HLSLBaseType_Min10Float2x3:        return "lowp mat2x3";
+	case HLSLBaseType_Min10Float2x4:        return "lowp mat2x4";
+	case HLSLBaseType_Min10Float3:       return "lowp vec3";
+	case HLSLBaseType_Min10Float3x2:        return "lowp mat3x2";
+	case HLSLBaseType_Min10Float3x3:        return "lowp mat3";
+	case HLSLBaseType_Min10Float3x4:        return "lowp mat3x4";
+	case HLSLBaseType_Min10Float4:       return "lowp vec4";
+	case HLSLBaseType_Min10Float4x2:        return "lowp mat4x2";
+	case HLSLBaseType_Min10Float4x3:        return "lowp mat4x3";
+	case HLSLBaseType_Min10Float4x4:        return "lowp mat4";
 
 	case HLSLBaseType_Bool:         return "bool";
 	case HLSLBaseType_Bool1x2:        return "bvecx2";
@@ -164,12 +160,205 @@ static const char* GetTypeName(const HLSLType& type)
 	case HLSLBaseType_Uint4x3:        return "uvec4x3";
 	case HLSLBaseType_Uint4x4:        return "uvec4x4";
 
-	case HLSLBaseType_InputPatch:     return type.InputPatchName;
-	case HLSLBaseType_OutputPatch:     return type.OutputPatchName;
+	case HLSLBaseType_InputPatch:     return "<input patch>";
+	case HLSLBaseType_OutputPatch:     return "<output patch>";
 
-	case HLSLBaseType_TriangleStream:	return type.structuredTypeName;
+	case HLSLBaseType_TriangleStream:	return "<triangle stream>";
 
-    case HLSLBaseType_Texture:      return "texture";
+	case HLSLBaseType_Texture:      return "texture";
+
+	case HLSLBaseType_Texture1D:      return "texture1D";
+	case HLSLBaseType_Texture1DArray:      return "texture1DArray";
+	case HLSLBaseType_Texture2D:      return "texture2D";
+	case HLSLBaseType_Texture2DArray:      return "texture1DArray";
+	case HLSLBaseType_Texture3D:      return "texture3D";
+	case HLSLBaseType_Texture2DMS:      return "texture2DMS";
+	case HLSLBaseType_Texture2DMSArray:      return "texture2DMSArray";
+	case HLSLBaseType_TextureCube:      return "textureCube";
+	case HLSLBaseType_TextureCubeArray:      return "textureCubeArray";
+
+	case HLSLBaseType_RWTexture1D:      return "image1D";
+	case HLSLBaseType_RWTexture1DArray: return "image1DArray";
+	case HLSLBaseType_RWTexture2D:      return "image2D";
+	case HLSLBaseType_RWTexture2DArray: return "image1DArray";
+	case HLSLBaseType_RWTexture3D:      return "image3D";
+
+	case HLSLBaseType_Sampler:      return "sampler";
+	case HLSLBaseType_Sampler2D:    return "sampler2D";
+	case HLSLBaseType_Sampler3D:    return "sampler3D";
+	case HLSLBaseType_SamplerCube:  return "samplerCube";
+	case HLSLBaseType_Sampler2DMS:  return "sampler2DMS";
+	case HLSLBaseType_Sampler2DArray:  return "sampler2DArray";
+	case HLSLBaseType_SamplerState:  return "sampler";
+	case HLSLBaseType_SamplerComparisonState:  return "samplerShadow";
+	case HLSLBaseType_UserDefined:  return "<user defined>";
+	default: return "?";
+	}
+}
+
+const char * GetTypeName(const HLSLType& type)
+{
+	HLSLBaseType baseType = type.baseType;
+
+	if (type.baseType == HLSLBaseType_Unknown)
+		baseType = type.elementType;
+
+
+	if (baseType == HLSLBaseType_UserDefined)
+	{
+		return RawStr(type.typeName);
+	}
+
+	if (baseType == HLSLBaseType_InputPatch)
+	{
+		return RawStr(type.InputPatchName);
+	}
+
+	if (baseType == HLSLBaseType_OutputPatch)
+	{
+		return RawStr(type.OutputPatchName);
+	}
+	
+	if (baseType == HLSLBaseType_TriangleStream)
+	{
+		return RawStr(type.structuredTypeName);
+	}
+
+
+	return GetBaseTypeName(baseType);
+}
+
+
+const char* GetBaseTypeConstructor(const HLSLBaseType& baseType)
+{
+	switch (baseType)
+	{
+	case HLSLBaseType_Void:				return "void";
+	case HLSLBaseType_Float:			return "float";
+	case HLSLBaseType_Float1x2:			return "mat1x2";
+	case HLSLBaseType_Float1x3:			return "mat1x3";
+	case HLSLBaseType_Float1x4:			return "mat1x4";
+	case HLSLBaseType_Float2:			return "vec2";
+	case HLSLBaseType_Float2x2:			return "mat2";
+	case HLSLBaseType_Float2x3:			return "mat2x3";
+	case HLSLBaseType_Float2x4:			return "mat2x4";
+	case HLSLBaseType_Float3:			return "vec3";
+	case HLSLBaseType_Float3x2:			return "mat3x2";
+	case HLSLBaseType_Float3x3:			return "mat3";
+	case HLSLBaseType_Float3x4:			return "mat3x4";
+	case HLSLBaseType_Float4:			return "vec4";
+	case HLSLBaseType_Float4x2:			return "mat4x2";
+	case HLSLBaseType_Float4x3:			return "mat4x3";
+	case HLSLBaseType_Float4x4:			return "mat4";
+
+	case HLSLBaseType_Half:				return "float";
+	case HLSLBaseType_Half1x2:			return "mat1x2";
+	case HLSLBaseType_Half1x3:			return "mat1x3";
+	case HLSLBaseType_Half1x4:			return "mat1x4";
+	case HLSLBaseType_Half2:			return "vec2";
+	case HLSLBaseType_Half2x2:			return "mat2";
+	case HLSLBaseType_Half2x3:			return "mat2x3";
+	case HLSLBaseType_Half2x4:        return "mat2x4";
+	case HLSLBaseType_Half3:       return "vec3";
+	case HLSLBaseType_Half3x2:        return "mat3x2";
+	case HLSLBaseType_Half3x3:        return "mat3";
+	case HLSLBaseType_Half3x4:        return "mat3x4";
+	case HLSLBaseType_Half4:       return "vec4";
+	case HLSLBaseType_Half4x2:        return "mat4x2";
+	case HLSLBaseType_Half4x3:        return "mat4x3";
+	case HLSLBaseType_Half4x4:        return "mat4";
+
+	case HLSLBaseType_Min16Float:         return "float";
+	case HLSLBaseType_Min16Float1x2:        return "mat1x2";
+	case HLSLBaseType_Min16Float1x3:        return "mat1x3";
+	case HLSLBaseType_Min16Float1x4:        return "mat1x4";
+	case HLSLBaseType_Min16Float2:       return "vec2";
+	case HLSLBaseType_Min16Float2x2:        return "mat2";
+	case HLSLBaseType_Min16Float2x3:        return "mat2x3";
+	case HLSLBaseType_Min16Float2x4:        return "mat2x4";
+	case HLSLBaseType_Min16Float3:       return "vec3";
+	case HLSLBaseType_Min16Float3x2:        return "mat3x2";
+	case HLSLBaseType_Min16Float3x3:        return "mat3";
+	case HLSLBaseType_Min16Float3x4:        return "mat3x4";
+	case HLSLBaseType_Min16Float4:       return "vec4";
+	case HLSLBaseType_Min16Float4x2:        return "mat4x2";
+	case HLSLBaseType_Min16Float4x3:        return "mat4x3";
+	case HLSLBaseType_Min16Float4x4:        return "mat4";
+
+	case HLSLBaseType_Min10Float:         return "float";
+	case HLSLBaseType_Min10Float1x2:        return "mat1x2";
+	case HLSLBaseType_Min10Float1x3:        return "mat1x3";
+	case HLSLBaseType_Min10Float1x4:        return "mat1x4";
+	case HLSLBaseType_Min10Float2:       return "vec2";
+	case HLSLBaseType_Min10Float2x2:        return "mat2";
+	case HLSLBaseType_Min10Float2x3:        return "mat2x3";
+	case HLSLBaseType_Min10Float2x4:        return "mat2x4";
+	case HLSLBaseType_Min10Float3:       return "vec3";
+	case HLSLBaseType_Min10Float3x2:        return "mat3x2";
+	case HLSLBaseType_Min10Float3x3:        return "mat3";
+	case HLSLBaseType_Min10Float3x4:        return "mat3x4";
+	case HLSLBaseType_Min10Float4:       return "vec4";
+	case HLSLBaseType_Min10Float4x2:        return "mat4x2";
+	case HLSLBaseType_Min10Float4x3:        return "mat4x3";
+	case HLSLBaseType_Min10Float4x4:        return "mat4";
+
+	case HLSLBaseType_Bool:         return "bool";
+	case HLSLBaseType_Bool1x2:        return "bvecx2";
+	case HLSLBaseType_Bool1x3:        return "bvec1x3";
+	case HLSLBaseType_Bool1x4:        return "bvec1x4";
+	case HLSLBaseType_Bool2:        return "bvec2";
+	case HLSLBaseType_Bool2x2:        return "bvec2x2";
+	case HLSLBaseType_Bool2x3:        return "bvec2x3";
+	case HLSLBaseType_Bool2x4:        return "bvec2x4";
+	case HLSLBaseType_Bool3:        return "bvec3";
+	case HLSLBaseType_Bool3x2:        return "bvec3x2";
+	case HLSLBaseType_Bool3x3:        return "bvec3x3";
+	case HLSLBaseType_Bool3x4:        return "bvec3x4";
+	case HLSLBaseType_Bool4:        return "bvec4";
+	case HLSLBaseType_Bool4x2:        return "bvec4x2";
+	case HLSLBaseType_Bool4x3:        return "bvec4x3";
+	case HLSLBaseType_Bool4x4:        return "bvec4x4";
+
+	case HLSLBaseType_Int:          return "int";
+	case HLSLBaseType_Int1x2:        return "ivec1x2";
+	case HLSLBaseType_Int1x3:        return "ivec1x3";
+	case HLSLBaseType_Int1x4:        return "ivec1x4";
+	case HLSLBaseType_Int2:        return "ivec2";
+	case HLSLBaseType_Int2x2:        return "ivec2x2";
+	case HLSLBaseType_Int2x3:        return "ivec2x3";
+	case HLSLBaseType_Int2x4:        return "ivec2x4";
+	case HLSLBaseType_Int3:        return "ivec3";
+	case HLSLBaseType_Int3x2:        return "ivec3x2";
+	case HLSLBaseType_Int3x3:        return "ivec3x3";
+	case HLSLBaseType_Int3x4:        return "ivec3x4";
+	case HLSLBaseType_Int4:        return "ivec4";
+	case HLSLBaseType_Int4x2:        return "ivec4x2";
+	case HLSLBaseType_Int4x3:        return "ivec4x3";
+	case HLSLBaseType_Int4x4:        return "ivec4x4";
+
+	case HLSLBaseType_Uint:          return "uint";
+	case HLSLBaseType_Uint1x2:        return "uvec1x2";
+	case HLSLBaseType_Uint1x3:        return "uvec1x3";
+	case HLSLBaseType_Uint1x4:        return "uvec1x4";
+	case HLSLBaseType_Uint2:        return "uvec2";
+	case HLSLBaseType_Uint2x2:        return "uvec2x2";
+	case HLSLBaseType_Uint2x3:        return "uvec2x3";
+	case HLSLBaseType_Uint2x4:        return "uvec2x4";
+	case HLSLBaseType_Uint3:        return "uvec3";
+	case HLSLBaseType_Uint3x2:        return "uvec3x2";
+	case HLSLBaseType_Uint3x3:        return "uvec3x3";
+	case HLSLBaseType_Uint3x4:        return "uvec3x4";
+	case HLSLBaseType_Uint4:        return "uvec4";
+	case HLSLBaseType_Uint4x2:        return "uvec4x2";
+	case HLSLBaseType_Uint4x3:        return "uvec4x3";
+	case HLSLBaseType_Uint4x4:        return "uvec4x4";
+
+	case HLSLBaseType_InputPatch:     return "<input patch>";
+	case HLSLBaseType_OutputPatch:     return "<output patch>";
+
+	case HLSLBaseType_TriangleStream:	return "<triangle stream>";
+
+	case HLSLBaseType_Texture:      return "texture";
 
 	case HLSLBaseType_Texture1D:      return "texture1D";
 	case HLSLBaseType_Texture1DArray:      return "texture1DArray";
@@ -187,16 +376,172 @@ static const char* GetTypeName(const HLSLType& type)
 	case HLSLBaseType_RWTexture2DArray:      return "RWTexture1DArray";
 	case HLSLBaseType_RWTexture3D:      return "RWTexture3D";
 
-    case HLSLBaseType_Sampler:      return "sampler";
-    case HLSLBaseType_Sampler2D:    return "sampler2D";
-    case HLSLBaseType_Sampler3D:    return "sampler3D";
-    case HLSLBaseType_SamplerCube:  return "samplerCube";
-    case HLSLBaseType_Sampler2DMS:  return "sampler2DMS";
-    case HLSLBaseType_Sampler2DArray:  return "sampler2DArray";
+	case HLSLBaseType_Sampler:      return "sampler";
+	case HLSLBaseType_Sampler2D:    return "sampler2D";
+	case HLSLBaseType_Sampler3D:    return "sampler3D";
+	case HLSLBaseType_SamplerCube:  return "samplerCube";
+	case HLSLBaseType_Sampler2DMS:  return "sampler2DMS";
+	case HLSLBaseType_Sampler2DArray:  return "sampler2DArray";
 	case HLSLBaseType_SamplerState:  return "sampler";
-    case HLSLBaseType_UserDefined:  return type.typeName;
-    default: return "?";
-    }
+	case HLSLBaseType_SamplerComparisonState:  return "samplerShadow";
+	case HLSLBaseType_UserDefined:  return "<user defined>";
+	default: return "?";
+	}
+}
+
+int TypeArraySize(HLSLType& type)
+{
+	int size = 1;
+	if (type.array)
+	{
+		for (int i =0; i<type.arrayDimension; ++i)
+			size *= type.arrayExtent[i];
+	}
+
+	return size;
+}
+
+void AssignRegisters(HLSLRoot* root, const eastl::vector<BindingShift>& shiftVec)
+{
+	struct Range{int start, end;};
+	eastl::hash_map<int, eastl::vector<Range>> spaces;
+
+	// Gather allocated registers ranges
+	HLSLStatement* statement = root->statement;
+	while (statement != NULL)
+	{
+		switch(statement->nodeType)
+		{
+		case HLSLNodeType_Buffer:
+			if (static_cast<HLSLBuffer*>(statement)->bPushConstant)
+				break;
+		case HLSLNodeType_TextureState:
+		case HLSLNodeType_SamplerState:
+			{
+				HLSLDeclaration* pDeclaration = (HLSLDeclaration*)statement;
+				Range r = {INT32_MAX, INT32_MAX};
+				int regId = pDeclaration->registerIndex;
+				int spaceId = eastl::max(pDeclaration->registerSpace, 0);
+				char regType= pDeclaration->registerType;
+				if (regId >=0)
+				{
+					auto it = eastl::find(
+						shiftVec.begin(),
+						shiftVec.end(),
+						BindingShift{regType, spaceId},
+						[](const BindingShift& shift, const BindingShift& desc){
+							return shift.m_reg ==desc.m_reg && shift.m_space==desc.m_space;
+					});
+					if (it != shiftVec.end())
+					{
+						regId += it->m_shift;
+						pDeclaration->registerIndex += it->m_shift;
+					}
+					r.start = regId;
+					r.end = r.start + (TypeArraySize(pDeclaration->type) - 1);
+					spaces[spaceId].push_back(r);
+				}
+				break;
+			}
+		}
+
+		statement = statement->nextStatement;
+	}
+
+	// Sort and merge ranges
+	for (auto& ranges: spaces)
+	{
+		if (ranges.second.empty())
+			continue;
+
+		eastl::sort(
+			ranges.second.begin(),
+			ranges.second.end(),
+			[](const Range& r1, const Range& r2){return r1.start < r2.start;}
+		);
+		size_t p = 0;
+		for (size_t i = 1; i < ranges.second.size(); ++i)
+		{
+			Range& r1 = ranges.second[p];
+			Range& r2 = ranges.second[i];
+			if (r2.start <= r1.end)
+			{
+				r1.end = eastl::max(r1.end, r2.end); 
+			}
+			else
+			{
+				++p;
+			}
+		}
+		ranges.second.erase(ranges.second.begin() + p + 1, ranges.second.end());
+	}
+
+	// Generate free ranges
+	for (auto& ranges: spaces)
+	{
+		if (ranges.second.empty())
+			continue;
+
+		eastl::vector<Range> free_ranges;
+		eastl::vector<Range>& used_ranges = ranges.second;
+
+		int s = 0;
+		for (size_t i = 0; i < used_ranges.size(); ++i)
+		{
+			Range& r = used_ranges[i];
+			if (r.start != s)
+			{
+				free_ranges.push_back({s, r.start-1});
+			}
+			s = r.end + 1;
+		}
+		if (s != INT32_MAX)
+			free_ranges.push_back({s, INT32_MAX});
+		ranges.second.assign(free_ranges.begin(), free_ranges.end());
+	}
+
+	// Assign registers
+	statement = root->statement;
+	while (statement != NULL)
+	{
+		switch(statement->nodeType)
+		{
+		case HLSLNodeType_Buffer:
+			if (static_cast<HLSLBuffer*>(statement)->bPushConstant)
+				break;
+		case HLSLNodeType_TextureState:
+		case HLSLNodeType_SamplerState:
+			{
+				HLSLDeclaration* pDeclaration = (HLSLDeclaration*)statement;
+				int regId = pDeclaration->registerIndex;
+				int spaceId = pDeclaration->registerSpace;
+
+				if (spaceId < 0)
+				{
+					pDeclaration->registerSpace = spaceId = 0;
+				}
+				if (regId < 0)
+				{
+					// Find suitable interval
+					auto& ranges = spaces[spaceId];
+					if (ranges.empty())
+						ranges.push_back({0, INT32_MAX});
+					int size = TypeArraySize(pDeclaration->type);
+					auto it = eastl::find(ranges.begin(), ranges.end(), size, [](const Range& r, int sz){return r.end-r.start>=sz-1;});
+					if (it == ranges.end())
+						break;
+					pDeclaration->registerIndex = it->start;
+					if (it->end - it->start + 1 <= size)
+						ranges.erase(it);
+					else
+						it->start += size;
+				}
+				break;
+			}
+		}
+
+		statement = statement->nextStatement;
+	}
 }
 
 static bool GetCanImplicitCast(const HLSLType& srcType, const HLSLType& dstType)
@@ -232,141 +577,1058 @@ static bool GetCanImplicitCast(const HLSLType& srcType, const HLSLType& dstType)
 	else
 		tempDstType = dstType.baseType;
 
-
     return tempSrcType == tempDstType;
 }
 
-static int GetFunctionArguments(HLSLFunctionCall* functionCall, HLSLExpression* expression[], int maxArguments)
+static void WriteOpenglGetDimensionsVariation(CodeWriter & writer,
+	const eastl::string & funcName,
+	const eastl::string & texType,
+	int numElem,
+	bool isArray,
+	int dimType, /* 0=int, 1=uint, 2=float */
+	bool isMsaa)
 {
-    HLSLExpression* argument = functionCall->argument;
-    int numArguments = 0;
-    while (argument != NULL)
-    {
-        if (numArguments < maxArguments)
-        {
-            expression[numArguments] = argument;
-        }
-        argument = argument->nextExpression;
-        ++numArguments;
-    }
-    return numArguments;
+	// each type/isArray combiation has 6 variations, 2 of each type (int/float/uint)
+	eastl::string dimNames[3];
+	dimNames[0] = "width";
+	dimNames[1] = "height";
+	dimNames[2] = "depth";
+
+	eastl::string vecNames[3];
+	vecNames[0] = "int";
+	vecNames[1] = "ivec2";
+	vecNames[2] = "ivec3";
+
+	eastl::string typeNames[3];
+	typeNames[0] = "int";
+	typeNames[1] = "uint";
+	typeNames[2] = "float";
+
+	eastl::string typeName = typeNames[dimType];
+
+	// Variation 0: Texture2DArray, UINT MipLevel, UINT Width, UINT Height, UINT Elements, UINT NumberOfLevels
+	// Variation 1: UINT Width, UINT Height, UINT Elements // miplevel is assumed to be 0
+	for (int iter = 0; iter < 2; iter++)
+	{
+		// first iteration has mipLevel and numLevels, but the second iteration does not
+		bool isFullProto = (iter == 0);
+
+		// msaa versions don't have the lod or lod variants
+		if (isMsaa && isFullProto)
+		{
+			continue;
+		}
+
+		eastl::string fullPrototype;
+
+		char prefix[2048];
+		String_Printf(prefix,2048,"void %s(%s texName",funcName.c_str(),texType.c_str());
+		fullPrototype = prefix;
+
+		if (isFullProto)
+		{
+			fullPrototype = fullPrototype + ", uint mipLevel";
+		}
+
+		for (int i = 0; i < numElem; i++)
+		{
+			fullPrototype = fullPrototype + ", out " + typeName + " " + dimNames[i];
+		}
+		
+		if (isArray)
+		{
+			fullPrototype = fullPrototype + ", out " + typeName + " elements";
+		}
+
+		if (isFullProto)
+		{
+			fullPrototype = fullPrototype + ", out uint numberOfLevels";
+		}
+
+		fullPrototype = fullPrototype + ")";
+
+		writer.WriteLine(0, "%s", fullPrototype.c_str());
+
+		writer.WriteLine(0, "{");
+
+		eastl::string mipLevelName = (iter == 0) ? ",int(mipLevel)" : ",0";
+
+		if (isMsaa)
+		{
+			mipLevelName = "";
+		}
+
+		if (numElem == 1 && !isArray)
+		{
+			writer.WriteLine(1, "width = %s(textureSize(texName%s));", typeName.c_str(), mipLevelName.c_str());
+			//writer.WriteLine(1, "width = 0;", typeName.c_str());
+		}
+		else
+		{
+			writer.WriteLine(1, "width = %s(textureSize(texName%s).x);", typeName.c_str(), mipLevelName.c_str());
+			//writer.WriteLine(1, "width = 0;", typeName.c_str());
+		}
+
+		if (numElem >= 2)
+		{
+			writer.WriteLine(1, "height = %s(textureSize(texName%s).y);", typeName.c_str(), mipLevelName.c_str());
+			//writer.WriteLine(1, "height = 0;", typeName.c_str());
+		}
+
+		if (numElem >= 3)
+		{
+			writer.WriteLine(1, "depth = %s(textureSize(texName%s).z);", typeName.c_str(), mipLevelName.c_str());
+			//writer.WriteLine(1, "depth = 0;", typeName.c_str());
+		}
+
+		if (isArray)
+		{
+			// the array size is the last component, which is y if there is 1 element and z if there are two.
+			eastl::string arrayComp = (numElem == 1) ? "y" : "z";
+
+			writer.WriteLine(1, "elements = %s(textureSize(texName%s).%s);", typeName.c_str(), mipLevelName.c_str(),arrayComp.c_str());
+			//writer.WriteLine(1, "elements = 0;", typeName.c_str(),arrayComp.c_str());
+		}
+
+		if (isFullProto)
+		{
+			writer.WriteLine(1, "numberOfLevels = uint(textureQueryLevels(texName));");
+			//writer.WriteLine(1, "numberOfLevels = 0;", typeName.c_str());
+		}
+
+		writer.WriteLine(0, "}");
+		writer.WriteLine(0, "");
+	}
+
+	// Variation 1: Texture2DArray UINT Width, UINT Height, UINT Elements
+
+
 }
+
+// TODO: output only revalent signatures
+static void WriteOpenglGetDimensionsOverloads(CodeWriter & writer, const eastl::string & funcName)
+{
+	// After thinking it through, the best way to handle the GetDimensions() variations is to just implement the overloads.
+	// If we want to reduce code size, we could only write out the overloads that we actually use.
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1D", 1, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1D", 1, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1D", 1, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1DArray", 1, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1DArray", 1, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture1DArray", 1, true, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2D", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2D", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2D", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1D", 1, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1D", 1, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1D", 1, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1DArray", 1, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1DArray", 1, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture1DArray", 1, true, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2D", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2D", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2D", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1D", 1, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1D", 1, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1D", 1, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1DArray", 1, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1DArray", 1, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture1DArray", 1, true, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2D", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2D", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2D", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture3D", 3, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture3D", 3, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture3D", 3, false, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture3D", 3, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture3D", 3, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture3D", 3, false, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture3D", 3, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture3D", 3, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture3D", 3, false, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCube", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCube", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCube", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCubeArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCubeArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "textureCubeArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCube", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCube", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCube", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCubeArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCubeArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utextureCubeArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCube", 2, false, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCube", 2, false, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCube", 2, false, 2, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCubeArray", 2, true, 0, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCubeArray", 2, true, 1, false);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itextureCubeArray", 2, true, 2, false);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMS", 2, false, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMS", 2, false, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMS", 2, false, 2, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMSArray", 2, true, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMSArray", 2, true, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "texture2DMSArray", 2, true, 2, true);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMS", 2, false, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMS", 2, false, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMS", 2, false, 2, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMSArray", 2, true, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMSArray", 2, true, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "utexture2DMSArray", 2, true, 2, true);
+
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMS", 2, false, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMS", 2, false, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMS", 2, false, 2, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMSArray", 2, true, 0, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMSArray", 2, true, 1, true);
+	WriteOpenglGetDimensionsVariation(writer, funcName, "itexture2DMSArray", 2, true, 2, true);
+}
+
+
+// we will think about vectors as comun vectors since the matrices are row major
+// so a float3x4 has 3 rows and 4 columns
+// whereas a float3 as 3 rows and 1 column
+// returns 0 on an error
+static int GetTypeNumRows(const HLSLBaseType lhsType)
+{
+	switch(lhsType)
+	{
+	case HLSLBaseType_Float:
+	case HLSLBaseType_Float1x2:
+	case HLSLBaseType_Float1x3:
+	case HLSLBaseType_Float1x4:
+		return 1;
+	case HLSLBaseType_Float2:
+	case HLSLBaseType_Float2x2:
+	case HLSLBaseType_Float2x3:
+	case HLSLBaseType_Float2x4:
+		return 2;
+	case HLSLBaseType_Float3:
+	case HLSLBaseType_Float3x2:
+	case HLSLBaseType_Float3x3:
+	case HLSLBaseType_Float3x4:
+		return 3;
+	case HLSLBaseType_Float4:
+	case HLSLBaseType_Float4x2:
+	case HLSLBaseType_Float4x3:
+	case HLSLBaseType_Float4x4:
+		return 4;
+
+	case HLSLBaseType_Half:
+	case HLSLBaseType_Half1x2:
+	case HLSLBaseType_Half1x3:
+	case HLSLBaseType_Half1x4:
+		return 1;
+	case HLSLBaseType_Half2:
+	case HLSLBaseType_Half2x2:
+	case HLSLBaseType_Half2x3:
+	case HLSLBaseType_Half2x4:
+		return 2;
+	case HLSLBaseType_Half3:
+	case HLSLBaseType_Half3x2:
+	case HLSLBaseType_Half3x3:
+	case HLSLBaseType_Half3x4:
+		return 3;
+	case HLSLBaseType_Half4:
+	case HLSLBaseType_Half4x2:
+	case HLSLBaseType_Half4x3:
+	case HLSLBaseType_Half4x4:
+		return 4;
+
+
+	case HLSLBaseType_Min16Float:
+	case HLSLBaseType_Min16Float1x2:
+	case HLSLBaseType_Min16Float1x3:
+	case HLSLBaseType_Min16Float1x4:
+		return 1;
+	case HLSLBaseType_Min16Float2:
+	case HLSLBaseType_Min16Float2x2:
+	case HLSLBaseType_Min16Float2x3:
+	case HLSLBaseType_Min16Float2x4:
+		return 2;
+	case HLSLBaseType_Min16Float3:
+	case HLSLBaseType_Min16Float3x2:
+	case HLSLBaseType_Min16Float3x3:
+	case HLSLBaseType_Min16Float3x4:
+		return 3;
+	case HLSLBaseType_Min16Float4:
+	case HLSLBaseType_Min16Float4x2:
+	case HLSLBaseType_Min16Float4x3:
+	case HLSLBaseType_Min16Float4x4:
+		return 4;
+
+	case HLSLBaseType_Min10Float:
+	case HLSLBaseType_Min10Float1x2:
+	case HLSLBaseType_Min10Float1x3:
+	case HLSLBaseType_Min10Float1x4:
+		return 1;
+	case HLSLBaseType_Min10Float2:
+	case HLSLBaseType_Min10Float2x2:
+	case HLSLBaseType_Min10Float2x3:
+	case HLSLBaseType_Min10Float2x4:
+		return 2;
+	case HLSLBaseType_Min10Float3:
+	case HLSLBaseType_Min10Float3x2:
+	case HLSLBaseType_Min10Float3x3:
+	case HLSLBaseType_Min10Float3x4:
+		return 3;
+	case HLSLBaseType_Min10Float4:
+	case HLSLBaseType_Min10Float4x2:
+	case HLSLBaseType_Min10Float4x3:
+	case HLSLBaseType_Min10Float4x4:
+		return 4;
+
+	case HLSLBaseType_Bool:
+	case HLSLBaseType_Bool1x2:
+	case HLSLBaseType_Bool1x3:
+	case HLSLBaseType_Bool1x4:
+		return 1;
+	case HLSLBaseType_Bool2:
+	case HLSLBaseType_Bool2x2:
+	case HLSLBaseType_Bool2x3:
+	case HLSLBaseType_Bool2x4:
+		return 2;
+	case HLSLBaseType_Bool3:
+	case HLSLBaseType_Bool3x2:
+	case HLSLBaseType_Bool3x3:
+	case HLSLBaseType_Bool3x4:
+		return 3;
+	case HLSLBaseType_Bool4:
+	case HLSLBaseType_Bool4x2:
+	case HLSLBaseType_Bool4x3:
+	case HLSLBaseType_Bool4x4:
+		return 4;
+
+	case HLSLBaseType_Int:
+	case HLSLBaseType_Int1x2:
+	case HLSLBaseType_Int1x3:
+	case HLSLBaseType_Int1x4:
+		return 1;
+	case HLSLBaseType_Int2:
+	case HLSLBaseType_Int2x2:
+	case HLSLBaseType_Int2x3:
+	case HLSLBaseType_Int2x4:
+		return 2;
+	case HLSLBaseType_Int3:
+	case HLSLBaseType_Int3x2:
+	case HLSLBaseType_Int3x3:
+	case HLSLBaseType_Int3x4:
+		return 3;
+	case HLSLBaseType_Int4:
+	case HLSLBaseType_Int4x2:
+	case HLSLBaseType_Int4x3:
+	case HLSLBaseType_Int4x4:
+		return 4;
+
+	case HLSLBaseType_Uint:
+	case HLSLBaseType_Uint1x2:
+	case HLSLBaseType_Uint1x3:
+	case HLSLBaseType_Uint1x4:
+		return 1;
+	case HLSLBaseType_Uint2:
+	case HLSLBaseType_Uint2x2:
+	case HLSLBaseType_Uint2x3:
+	case HLSLBaseType_Uint2x4:
+		return 2;
+	case HLSLBaseType_Uint3:
+	case HLSLBaseType_Uint3x2:
+	case HLSLBaseType_Uint3x3:
+	case HLSLBaseType_Uint3x4:
+		return 3;
+	case HLSLBaseType_Uint4:
+	case HLSLBaseType_Uint4x2:
+	case HLSLBaseType_Uint4x3:
+	case HLSLBaseType_Uint4x4:
+		return 4;
+
+	case HLSLBaseType_InputPatch:
+	case HLSLBaseType_OutputPatch:
+
+	case HLSLBaseType_PointStream:
+	case HLSLBaseType_LineStream:
+	case HLSLBaseType_TriangleStream:
+
+	case HLSLBaseType_Point:
+	case HLSLBaseType_Line:
+	case HLSLBaseType_Triangle:
+	case HLSLBaseType_Lineadj:
+	case HLSLBaseType_Triangleadj:
+
+
+
+	case HLSLBaseType_Texture:
+
+	case HLSLBaseType_Texture1D:
+	case HLSLBaseType_Texture1DArray:
+	case HLSLBaseType_Texture2D:
+	case HLSLBaseType_Texture2DArray:
+	case HLSLBaseType_Texture3D:
+	case HLSLBaseType_Texture2DMS:
+	case HLSLBaseType_Texture2DMSArray:
+	case HLSLBaseType_TextureCube:
+	case HLSLBaseType_TextureCubeArray:
+
+	case HLSLBaseType_RasterizerOrderedTexture1D:
+	case HLSLBaseType_RasterizerOrderedTexture1DArray:
+	case HLSLBaseType_RasterizerOrderedTexture2D:
+	case HLSLBaseType_RasterizerOrderedTexture2DArray:
+	case HLSLBaseType_RasterizerOrderedTexture3D:
+
+	case HLSLBaseType_RWTexture1D:
+	case HLSLBaseType_RWTexture1DArray:
+	case HLSLBaseType_RWTexture2D:
+	case HLSLBaseType_RWTexture2DArray:
+	case HLSLBaseType_RWTexture3D:
+
+	case HLSLBaseType_Sampler:           // @@ use type inference to determine sampler type.
+	case HLSLBaseType_Sampler2D:
+	case HLSLBaseType_Sampler3D:
+	case HLSLBaseType_SamplerCube:
+	case HLSLBaseType_Sampler2DShadow:
+	case HLSLBaseType_Sampler2DMS:
+	case HLSLBaseType_Sampler2DArray:
+
+	case HLSLBaseType_UserDefined:       // struct
+	case HLSLBaseType_SamplerState:
+	case HLSLBaseType_SamplerComparisonState:
+	case HLSLBaseType_TextureState:
+	case HLSLBaseType_RWTextureState:
+
+	case HLSLBaseType_PatchControlPoint:
+
+	//Now: these are for MSL only
+	case HLSLBaseType_DepthTexture2D:
+	case HLSLBaseType_DepthTexture2DArray:
+	case HLSLBaseType_DepthTexture2DMS:
+	case HLSLBaseType_DepthTexture2DMSArray:
+	case HLSLBaseType_DepthTextureCube:
+	case HLSLBaseType_DepthTextureCubeArray:
+
+	case HLSLBaseType_AddressU:
+	case HLSLBaseType_AddressV:
+	case HLSLBaseType_AddressW:
+	case HLSLBaseType_BorderColor:
+	case HLSLBaseType_Filter:
+	case HLSLBaseType_MaxAnisotropy:
+	case HLSLBaseType_MaxLOD:
+	case HLSLBaseType_MinLOD:
+	case HLSLBaseType_MipLODBias:
+	case HLSLBaseType_ComparisonFunc:
+
+
+	case HLSLBaseType_CBuffer:
+	case HLSLBaseType_TBuffer:
+	case HLSLBaseType_ConstantBuffer:
+	case HLSLBaseType_StructuredBuffer:
+	case HLSLBaseType_PureBuffer:
+	case HLSLBaseType_RWBuffer:
+	case HLSLBaseType_RWStructuredBuffer:
+	case HLSLBaseType_ByteAddressBuffer:
+	case HLSLBaseType_RWByteAddressBuffer:
+
+	case HLSLBaseType_RasterizerOrderedBuffer:
+	case HLSLBaseType_RasterizerOrderedStructuredBuffer:
+	case HLSLBaseType_RasterizerOrderedByteAddressBuffer:
+
+
+	case HLSLBaseType_UserMacro:
+	case HLSLBaseType_Empty:
+	default:
+		return 0;
+	}
+
+	ASSERT_PARSER(0);
+	return 0;
+}
+
+
+
+
+
+static int GetTypeNumCols(const HLSLBaseType lhsType)
+{
+	switch (lhsType)
+	{
+	case HLSLBaseType_Float:
+	case HLSLBaseType_Float2:
+	case HLSLBaseType_Float3:
+	case HLSLBaseType_Float4:
+		return 1;
+	case HLSLBaseType_Float1x2:
+	case HLSLBaseType_Float2x2:
+	case HLSLBaseType_Float3x2:
+	case HLSLBaseType_Float4x2:
+		return 2;
+	case HLSLBaseType_Float1x3:
+	case HLSLBaseType_Float2x3:
+	case HLSLBaseType_Float3x3:
+	case HLSLBaseType_Float4x3:
+		return 3;
+	case HLSLBaseType_Float1x4:
+	case HLSLBaseType_Float2x4:
+	case HLSLBaseType_Float3x4:
+	case HLSLBaseType_Float4x4:
+		return 4;
+
+	case HLSLBaseType_Half:
+	case HLSLBaseType_Half2:
+	case HLSLBaseType_Half3:
+	case HLSLBaseType_Half4:
+		return 1;
+	case HLSLBaseType_Half1x2:
+	case HLSLBaseType_Half2x2:
+	case HLSLBaseType_Half3x2:
+	case HLSLBaseType_Half4x2:
+		return 2;
+	case HLSLBaseType_Half1x3:
+	case HLSLBaseType_Half2x3:
+	case HLSLBaseType_Half3x3:
+	case HLSLBaseType_Half4x3:
+		return 3;
+	case HLSLBaseType_Half1x4:
+	case HLSLBaseType_Half2x4:
+	case HLSLBaseType_Half3x4:
+	case HLSLBaseType_Half4x4:
+		return 4;
+
+	case HLSLBaseType_Min16Float:
+	case HLSLBaseType_Min16Float2:
+	case HLSLBaseType_Min16Float3:
+	case HLSLBaseType_Min16Float4:
+		return 1;
+	case HLSLBaseType_Min16Float1x2:
+	case HLSLBaseType_Min16Float2x2:
+	case HLSLBaseType_Min16Float3x2:
+	case HLSLBaseType_Min16Float4x2:
+		return 2;
+	case HLSLBaseType_Min16Float1x3:
+	case HLSLBaseType_Min16Float2x3:
+	case HLSLBaseType_Min16Float3x3:
+	case HLSLBaseType_Min16Float4x3:
+		return 3;
+	case HLSLBaseType_Min16Float1x4:
+	case HLSLBaseType_Min16Float2x4:
+	case HLSLBaseType_Min16Float3x4:
+	case HLSLBaseType_Min16Float4x4:
+		return 4;
+
+	case HLSLBaseType_Min10Float:
+	case HLSLBaseType_Min10Float2:
+	case HLSLBaseType_Min10Float3:
+	case HLSLBaseType_Min10Float4:
+		return 1;
+	case HLSLBaseType_Min10Float1x2:
+	case HLSLBaseType_Min10Float2x2:
+	case HLSLBaseType_Min10Float3x2:
+	case HLSLBaseType_Min10Float4x2:
+		return 2;
+	case HLSLBaseType_Min10Float1x3:
+	case HLSLBaseType_Min10Float2x3:
+	case HLSLBaseType_Min10Float3x3:
+	case HLSLBaseType_Min10Float4x3:
+		return 3;
+	case HLSLBaseType_Min10Float1x4:
+	case HLSLBaseType_Min10Float2x4:
+	case HLSLBaseType_Min10Float3x4:
+	case HLSLBaseType_Min10Float4x4:
+		return 4;
+
+	case HLSLBaseType_Bool:
+	case HLSLBaseType_Bool2:
+	case HLSLBaseType_Bool3:
+	case HLSLBaseType_Bool4:
+		return 1;
+	case HLSLBaseType_Bool1x2:
+	case HLSLBaseType_Bool2x2:
+	case HLSLBaseType_Bool3x2:
+	case HLSLBaseType_Bool4x2:
+		return 2;
+	case HLSLBaseType_Bool1x3:
+	case HLSLBaseType_Bool2x3:
+	case HLSLBaseType_Bool3x3:
+	case HLSLBaseType_Bool4x3:
+		return 3;
+	case HLSLBaseType_Bool1x4:
+	case HLSLBaseType_Bool2x4:
+	case HLSLBaseType_Bool3x4:
+	case HLSLBaseType_Bool4x4:
+		return 4;
+
+	case HLSLBaseType_Int:
+	case HLSLBaseType_Int2:
+	case HLSLBaseType_Int3:
+	case HLSLBaseType_Int4:
+		return 1;
+	case HLSLBaseType_Int1x2:
+	case HLSLBaseType_Int2x2:
+	case HLSLBaseType_Int3x2:
+	case HLSLBaseType_Int4x2:
+		return 2;
+	case HLSLBaseType_Int1x3:
+	case HLSLBaseType_Int2x3:
+	case HLSLBaseType_Int3x3:
+	case HLSLBaseType_Int4x3:
+		return 3;
+	case HLSLBaseType_Int1x4:
+	case HLSLBaseType_Int2x4:
+	case HLSLBaseType_Int3x4:
+	case HLSLBaseType_Int4x4:
+		return 4;
+
+	case HLSLBaseType_Uint:
+	case HLSLBaseType_Uint2:
+	case HLSLBaseType_Uint3:
+	case HLSLBaseType_Uint4:
+		return 1;
+	case HLSLBaseType_Uint1x2:
+	case HLSLBaseType_Uint2x2:
+	case HLSLBaseType_Uint3x2:
+	case HLSLBaseType_Uint4x2:
+		return 2;
+	case HLSLBaseType_Uint1x3:
+	case HLSLBaseType_Uint2x3:
+	case HLSLBaseType_Uint3x3:
+	case HLSLBaseType_Uint4x3:
+		return 3;
+	case HLSLBaseType_Uint1x4:
+	case HLSLBaseType_Uint2x4:
+	case HLSLBaseType_Uint3x4:
+	case HLSLBaseType_Uint4x4:
+		return 4;
+	case HLSLBaseType_InputPatch:
+	case HLSLBaseType_OutputPatch:
+
+	case HLSLBaseType_PointStream:
+	case HLSLBaseType_LineStream:
+	case HLSLBaseType_TriangleStream:
+
+	case HLSLBaseType_Point:
+	case HLSLBaseType_Line:
+	case HLSLBaseType_Triangle:
+	case HLSLBaseType_Lineadj:
+	case HLSLBaseType_Triangleadj:
+
+
+
+	case HLSLBaseType_Texture:
+
+	case HLSLBaseType_Texture1D:
+	case HLSLBaseType_Texture1DArray:
+	case HLSLBaseType_Texture2D:
+	case HLSLBaseType_Texture2DArray:
+	case HLSLBaseType_Texture3D:
+	case HLSLBaseType_Texture2DMS:
+	case HLSLBaseType_Texture2DMSArray:
+	case HLSLBaseType_TextureCube:
+	case HLSLBaseType_TextureCubeArray:
+
+	case HLSLBaseType_RasterizerOrderedTexture1D:
+	case HLSLBaseType_RasterizerOrderedTexture1DArray:
+	case HLSLBaseType_RasterizerOrderedTexture2D:
+	case HLSLBaseType_RasterizerOrderedTexture2DArray:
+	case HLSLBaseType_RasterizerOrderedTexture3D:
+
+	case HLSLBaseType_RWTexture1D:
+	case HLSLBaseType_RWTexture1DArray:
+	case HLSLBaseType_RWTexture2D:
+	case HLSLBaseType_RWTexture2DArray:
+	case HLSLBaseType_RWTexture3D:
+
+	case HLSLBaseType_Sampler:           // @@ use type inference to determine sampler type.
+	case HLSLBaseType_Sampler2D:
+	case HLSLBaseType_Sampler3D:
+	case HLSLBaseType_SamplerCube:
+	case HLSLBaseType_Sampler2DShadow:
+	case HLSLBaseType_Sampler2DMS:
+	case HLSLBaseType_Sampler2DArray:
+
+	case HLSLBaseType_UserDefined:       // struct
+	case HLSLBaseType_SamplerState:
+	case HLSLBaseType_TextureState:
+	case HLSLBaseType_RWTextureState:
+
+	case HLSLBaseType_PatchControlPoint:
+
+		//Now: these are for MSL only
+	case HLSLBaseType_DepthTexture2D:
+	case HLSLBaseType_DepthTexture2DArray:
+	case HLSLBaseType_DepthTexture2DMS:
+	case HLSLBaseType_DepthTexture2DMSArray:
+	case HLSLBaseType_DepthTextureCube:
+	case HLSLBaseType_DepthTextureCubeArray:
+
+	case HLSLBaseType_AddressU:
+	case HLSLBaseType_AddressV:
+	case HLSLBaseType_AddressW:
+	case HLSLBaseType_BorderColor:
+	case HLSLBaseType_Filter:
+	case HLSLBaseType_MaxAnisotropy:
+	case HLSLBaseType_MaxLOD:
+	case HLSLBaseType_MinLOD:
+	case HLSLBaseType_MipLODBias:
+	case HLSLBaseType_ComparisonFunc:
+
+
+	case HLSLBaseType_CBuffer:
+	case HLSLBaseType_TBuffer:
+	case HLSLBaseType_ConstantBuffer:
+	case HLSLBaseType_StructuredBuffer:
+	case HLSLBaseType_PureBuffer:
+	case HLSLBaseType_RWBuffer:
+	case HLSLBaseType_RWStructuredBuffer:
+	case HLSLBaseType_ByteAddressBuffer:
+	case HLSLBaseType_RWByteAddressBuffer:
+
+	case HLSLBaseType_RasterizerOrderedBuffer:
+	case HLSLBaseType_RasterizerOrderedStructuredBuffer:
+	case HLSLBaseType_RasterizerOrderedByteAddressBuffer:
+
+
+	case HLSLBaseType_UserMacro:
+	case HLSLBaseType_Empty:
+	default:
+		return 0;
+	}
+
+	ASSERT_PARSER(0);
+	return 0;
+}
+
+
+
+static void WriteOpenglMatrixMultiplyVariation(CodeWriter & writer,
+	const eastl::string & funcName,
+	const HLSLBaseType lhsType,
+	const HLSLBaseType rhsType,
+	const eastl::string & lhsName,
+	const eastl::string & rhsName)
+{
+	bool lhsMatrix = IsMatrixType(lhsType);
+	bool rhsMatrix = IsMatrixType(rhsType);
+
+	int lhsRows = GetTypeNumRows(lhsType);
+	int lhsCols = GetTypeNumCols(lhsType);
+
+	int rhsRows = GetTypeNumRows(rhsType);
+	int rhsCols = GetTypeNumCols(rhsType);
+
+
+	HLSLBaseType lhsScalarType = GetScalarBaseType(lhsType);
+	HLSLBaseType rhsScalarType = GetScalarBaseType(rhsType);
+	HLSLBaseType dstScalarType = HLSLBaseType_Unknown;;
+
+	{
+		HLSLType tempLhs;
+		tempLhs.baseType = lhsScalarType;
+		HLSLType tempRhs;
+		tempRhs.baseType = rhsScalarType;
+		HLSLType tempDst, argType;
+		bool convertOk = HLSLParser::GetBinaryOpResultType(HLSLBinaryOp_Mul, tempLhs, tempRhs, argType, tempDst);
+		ASSERT_PARSER(convertOk);
+
+		dstScalarType = tempDst.baseType;
+	}
+
+	// note: the logic below for the destination type is based on the assumption that the types are sequential
+
+	if (lhsMatrix && rhsMatrix)
+	{
+		ASSERT_PARSER(lhsCols == rhsRows);
+		
+		int dstCols = rhsCols;
+		int dstRows = lhsRows;
+
+		int vecLen = lhsCols;
+		HLSLBaseType dstType = (HLSLBaseType)(dstScalarType + ((dstRows-1) * 4) + (dstCols-1));
+
+		eastl::string dstName = GetBaseTypeName(dstType);
+
+		writer.WriteLine(0, "%s %s(%s lhs, %s rhs)", dstName.c_str(), funcName.c_str(), lhsName.c_str(), rhsName.c_str());
+		writer.WriteLine(0, "{");
+		writer.WriteLine(1, "%s dst;", dstName.c_str());
+
+		for (int r = 0; r < dstRows; r++)
+		{
+			for (int c = 0; c < dstCols; c++)
+			{
+				writer.Write("\tdst[%d][%d] = ", r, c);
+
+				for (int i = 0; i < vecLen; i++)
+				{
+					if (i >= 1)
+					{
+						writer.Write(" + ");
+					}
+					writer.Write("lhs[%d][%d]*rhs[%d][%d]", r, i, i, c);
+				}
+				writer.Write(";\n");
+			}
+		}
+		writer.WriteLine(1, "return dst;");
+		writer.WriteLine(0, "}");
+	}
+	else if (lhsMatrix)
+	{
+		// if the matrix is on the left side, it's a matrix times a column vector
+		// [ m00 m01 ][ x0 ] = [ b0 ]
+		// [ m10 m11 ][ x1 ]   [ b1 ]
+		// [ m20 m21 ]         [ b2 ]
+
+		ASSERT_PARSER(!rhsMatrix);
+		ASSERT_PARSER(rhsRows >= 2);
+		ASSERT_PARSER(lhsCols == rhsRows);
+
+		int dstRows = lhsRows;
+		int vecLen = lhsCols;
+		HLSLBaseType dstType = (HLSLBaseType)(dstScalarType + ((dstRows - 1) * 4) + (0));
+
+		eastl::string dstName = GetBaseTypeName(dstType);
+
+		writer.WriteLine(0, "%s %s(%s lhs, %s rhs)", dstName.c_str(), funcName.c_str(), lhsName.c_str(), rhsName.c_str());
+		writer.WriteLine(0, "{");
+		writer.WriteLine(1, "%s dst;", dstName.c_str());
+
+		for (int r = 0; r < dstRows; r++)
+		{
+			writer.Write("\tdst[%d] = ", r);
+
+			for (int i = 0; i < vecLen; i++)
+			{
+				if (i >= 1)
+				{
+					writer.Write(" + ");
+				}
+				writer.Write("lhs[%d][%d]*rhs[%d]", r, i, i);
+			}
+			writer.Write(";\n");
+		}
+
+		writer.WriteLine(1, "return dst;");
+		writer.WriteLine(0, "}");
+
+	}
+	else if (rhsMatrix)
+	{
+		// if the matrix is on the right side, we assume everything is backwards, so
+		// the vector is a row vector, not a column vector
+		// [ x0 x1 ][ m00 m01 m02] = [ b0 b1 b2]
+		//          [ m10 m11 m12] 
+		// 
+
+		ASSERT_PARSER(!lhsMatrix);
+		ASSERT_PARSER(lhsRows >= 2);
+		ASSERT_PARSER(lhsRows == rhsRows);
+
+		int dstRows = rhsCols;
+		int vecLen = rhsRows;
+		HLSLBaseType dstType = (HLSLBaseType)(dstScalarType + ((dstRows - 1) * 4) + (0));
+
+		eastl::string dstName = GetBaseTypeName(dstType);
+
+		writer.WriteLine(0, "%s %s(%s lhs, %s rhs)", dstName.c_str(), funcName.c_str(), lhsName.c_str(), rhsName.c_str());
+		writer.WriteLine(0, "{");
+
+		writer.WriteLine(1, "%s dst;", dstName.c_str());
+
+		for (int r = 0; r < dstRows; r++)
+		{
+			writer.Write("\tdst[%d] = ", r);
+
+			for (int i = 0; i < vecLen; i++)
+			{
+				if (i >= 1)
+				{
+					writer.Write(" + ");
+				}
+				writer.Write("lhs[%d]*rhs[%d][%d]", i, i, r);
+			}
+			writer.Write(";\n");
+		}
+
+		writer.WriteLine(1, "return dst;");
+
+		writer.WriteLine(0, "}");
+	}
+	else
+	{
+		// neither type is a matrix?
+		ASSERT_PARSER(0);
+	}
+
+	writer.WriteLine(0, "");
+}
+
+
 
 GLSLGenerator::GLSLGenerator() :
     m_writer(/* writeFileNames= */ false)
 {
     m_tree                      = NULL;
-    m_entryName                 = NULL;
+	m_entryName.Reset();
     m_target                    = Target_VertexShader;
     m_version                   = Version_140;
     m_versionLegacy             = false;
-    m_inAttribPrefix            = NULL;
-    m_outAttribPrefix           = NULL;
+    m_inAttribPrefix.Reset();
+    m_outAttribPrefix.Reset();
     m_error                     = false;
-    m_matrixRowFunction[0]      = 0;
-    m_matrixCtorFunction[0]     = 0;
-    m_matrixMulFunction[0]      = 0;
-    m_clipFunction[0]           = 0;
-    m_tex2DlodFunction[0]       = 0;
-    m_tex2DbiasFunction[0]      = 0;
-    m_tex3DlodFunction[0]       = 0;
-    m_texCUBEbiasFunction[0]    = 0;
-	m_texCUBElodFunction[ 0 ] 	= 0;
-    m_scalarSwizzle2Function[0] = 0;
-    m_scalarSwizzle3Function[0] = 0;
-    m_scalarSwizzle4Function[0] = 0;
-    m_sinCosFunction[0]         = 0;
-	m_bvecTernary[ 0 ]			= 0;
+	m_matrixRowFunction.Reset();
+	m_matrixCtorFunction.Reset();
+    m_matrixMulFunction.Reset();
+    m_clipFunction.Reset();
+    m_tex2DlodFunction.Reset();
+    m_tex2DbiasFunction.Reset();
+    m_tex3DlodFunction.Reset();
+    m_texCUBEbiasFunction.Reset();
+	m_texCUBElodFunction.Reset();
+	m_textureLodOffsetFunction.Reset();
+	m_scalarSwizzle2Function.Reset();
+    m_scalarSwizzle3Function.Reset();
+    m_scalarSwizzle4Function.Reset();
+    m_sinCosFunction.Reset();
+	m_bvecTernary.Reset();
     m_outputPosition            = false;
-    m_outputTargets             = 0;
-	m_outputGeometryType[0]		= 0;
+    m_outputTypes.clear();
+	m_outputGeometryType.Reset();
 
-	m_f16tof32Function[0]		= 0;
-	m_f32tof16Function[0]		= 0;
-
+	m_f16tof32Function.Reset();
+	m_f32tof16Function.Reset();
+	m_stringLibrary = NULL;
 }
 
-bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, const char* entryName, const Options& options)
+bool GLSLGenerator::Generate(StringLibrary * stringLibrary, HLSLTree* tree, Target target, Version version, const char* entryName, const Options& options)
 {
+	m_stringLibrary = stringLibrary;
 
     m_tree      = tree;
-    m_entryName = entryName;
+    m_entryName = MakeCached(entryName);
     m_target    = target;
     m_version   = version;
     m_versionLegacy = (version == Version_110 || version == Version_100_ES);
     m_options   = options;
 
-	m_domain = NULL;
-	m_partitioning = NULL;
-	m_outputtopology = NULL;
-	m_patchconstantfunc = NULL;
 
-	m_geoInputdataType = NULL;
-	m_geoOutputdataType = NULL;
+	m_domain.Reset();
+	m_partitioning.Reset();
+	m_outputtopology.Reset();
+	m_patchconstantfunc.Reset();
 
-	//memcpy_s(m_preprocessorPackage, sizeof(GLSLPreprocessorPackage) * 128, preprocessors, sizeof(GLSLPreprocessorPackage) * 128);
-	m_StructuredBufferCounter = 0;
+	m_geoInputdataType.Reset();
+	m_geoOutputdataType.Reset();
 
-	m_PushConstantBufferCounter = 0;
+	m_StructuredBufferNames.clear();
+	m_PushConstantBuffers.clear();
 
 	//m_options.flags |= Flag_PackMatrixRowMajor;
 
-    ChooseUniqueName("matrix_row", m_matrixRowFunction, sizeof(m_matrixRowFunction));
-    ChooseUniqueName("matrix_ctor", m_matrixCtorFunction, sizeof(m_matrixCtorFunction));
-    ChooseUniqueName("matrix_mul", m_matrixMulFunction, sizeof(m_matrixMulFunction));
-    ChooseUniqueName("clip", m_clipFunction, sizeof(m_clipFunction));
-	ChooseUniqueName("f16tof32", m_f16tof32Function, sizeof(m_f16tof32Function));
-	ChooseUniqueName("f32tof16", m_f32tof16Function, sizeof(m_f32tof16Function));
+	bool needs_f16tof32 = m_tree->NeedsFunction(MakeCached("f16tof32"));
+	bool needs_f32tof16 = m_tree->NeedsFunction(MakeCached("f32tof16"));
+	bool needs_clip = m_tree->NeedsFunction(MakeCached("clip"));
+	bool needs_tex2Dlod = m_tree->NeedsFunction(MakeCached("tex2Dlod"));
+	bool needs_tex2Dgrad = m_tree->NeedsFunction(MakeCached("tex2Dgrad"));
+	bool needs_tex2Dbias = m_tree->NeedsFunction(MakeCached("tex2Dbias"));
+	bool needs_tex2DMSfetch = m_tree->NeedsFunction(MakeCached("tex2DMSfetch"));
 
-    ChooseUniqueName("tex2Dlod", m_tex2DlodFunction, sizeof(m_tex2DlodFunction));
-    ChooseUniqueName("tex2Dbias", m_tex2DbiasFunction, sizeof(m_tex2DbiasFunction));
-    ChooseUniqueName("tex2Dgrad", m_tex2DgradFunction, sizeof(m_tex2DgradFunction));
-    ChooseUniqueName("tex3Dlod", m_tex3DlodFunction, sizeof(m_tex3DlodFunction));
-    ChooseUniqueName("texCUBEbias", m_texCUBEbiasFunction, sizeof(m_texCUBEbiasFunction));
-	ChooseUniqueName( "texCUBElod", m_texCUBElodFunction, sizeof( m_texCUBElodFunction ) );
+	bool needs_USE_SAMPLESS = m_tree->NeedsExtension(USE_SAMPLESS);
+	// do we ever actually need this now that includes are removed in favor of mcpp?
+	bool needs_USE_INCLUDE = m_tree->NeedsExtension(USE_INCLUDE);
+	bool needs_USE_NonUniformResourceIndex = m_tree->NeedsExtension(USE_NonUniformResourceIndex);
+	bool needs_USE_Subgroup_Basic = m_tree->NeedsExtension(USE_Subgroup_Basic);
+	bool needs_USE_Subgroup_Quad = m_tree->NeedsExtension(USE_Subgroup_Quad);
+	bool needs_USE_Subgroup_Ballot = m_tree->NeedsExtension(USE_Subgroup_Ballot);
+	bool needs_USE_Subgroup_Arithmetic = m_tree->NeedsExtension(USE_Subgroup_Arithmetic);
+	bool needs_USE_ControlFlowAttributes = m_tree->NeedsExtension(USE_ControlFlowAttributes);
+	bool needs_tex3Dlod = m_tree->NeedsFunction(MakeCached("tex3Dlod"));
+	bool needs_texCUBEbias = m_tree->NeedsFunction(MakeCached("texCUBEbias"));
+	bool needs_texCUBElod = m_tree->NeedsFunction(MakeCached("texCUBElod"));
+
+	bool needs_sincos = m_tree->NeedsFunction(MakeCached("sincos"));
+	bool needs_asfloat = m_tree->NeedsFunction(MakeCached("asfloat"));
+	bool needs_asuint = m_tree->NeedsFunction(MakeCached("asuint"));
+	bool needs_asint = m_tree->NeedsFunction(MakeCached("asint"));
+
+	AssignRegisters(m_tree->GetRoot(), m_options.shiftVec);
+
+    ChooseUniqueName("matrix_row", m_matrixRowFunction);
+    ChooseUniqueName("matrix_ctor", m_matrixCtorFunction);
+    ChooseUniqueName("matrix_mul", m_matrixMulFunction);
+    ChooseUniqueName("clip", m_clipFunction);
+	ChooseUniqueName("f16tof32", m_f16tof32Function);
+	ChooseUniqueName("f32tof16", m_f32tof16Function);
+
+    ChooseUniqueName("tex2Dlod", m_tex2DlodFunction);
+    ChooseUniqueName("tex2Dbias", m_tex2DbiasFunction);
+    ChooseUniqueName("tex2Dgrad", m_tex2DgradFunction);
+    ChooseUniqueName("tex3Dlod", m_tex3DlodFunction);
+    ChooseUniqueName("texCUBEbias", m_texCUBEbiasFunction);
+	ChooseUniqueName("texCUBElod", m_texCUBElodFunction);
+	ChooseUniqueName("textureLodOffset", m_textureLodOffsetFunction);
+
+	ChooseUniqueName("GetDimensions", m_getDimensions);
+	ChooseUniqueName("MulMat", m_mulMatFunction);
 
     for (int i = 0; i < s_numReservedWords; ++i)
     {
-        ChooseUniqueName( s_reservedWord[i], m_reservedWord[i], sizeof(m_reservedWord[i]) );
+        ChooseUniqueName( s_reservedWord[i], m_reservedWord[i]);
     }
 
-    ChooseUniqueName("m_scalar_swizzle2", m_scalarSwizzle2Function, sizeof(m_scalarSwizzle2Function));
-    ChooseUniqueName("m_scalar_swizzle3", m_scalarSwizzle3Function, sizeof(m_scalarSwizzle3Function));
-    ChooseUniqueName("m_scalar_swizzle4", m_scalarSwizzle4Function, sizeof(m_scalarSwizzle4Function));
+    ChooseUniqueName("m_scalar_swizzle2", m_scalarSwizzle2Function);
+    ChooseUniqueName("m_scalar_swizzle3", m_scalarSwizzle3Function);
+    ChooseUniqueName("m_scalar_swizzle4", m_scalarSwizzle4Function);
 
-    ChooseUniqueName("sincos", m_sinCosFunction, sizeof(m_sinCosFunction));
+    ChooseUniqueName("sincos", m_sinCosFunction);
 
-	ChooseUniqueName( "bvecTernary", m_bvecTernary, sizeof( m_bvecTernary ) );
+	ChooseUniqueName( "bvecTernary", m_bvecTernary);
 
     if (target == Target_VertexShader)
     {
-        m_inAttribPrefix  = "";
-        m_outAttribPrefix = "vertOutput_";
+        m_inAttribPrefix  = MakeCached("");
+        m_outAttribPrefix = MakeCached("vertOutput_");
     }
     else if (target == Target_FragmentShader)
     {
-        m_inAttribPrefix  = "fragInput_";
-        m_outAttribPrefix = "fragOutput_";
+        m_inAttribPrefix  = MakeCached("fragInput_");
+        m_outAttribPrefix = MakeCached("fragOutput_");
     }
 	else if (target == Target_HullShader)
 	{
-		m_inAttribPrefix = "tescInput_";
-		m_outAttribPrefix = "tescOutput_";
+		m_inAttribPrefix = MakeCached("tescInput_");
+		m_outAttribPrefix = MakeCached("tescOutput_");
 	}
 	else if (target == Target_DomainShader)
 	{
-		m_inAttribPrefix = "teseInput_";
-		m_outAttribPrefix = "teseOutput_";
+		m_inAttribPrefix = MakeCached("teseInput_");
+		m_outAttribPrefix = MakeCached("teseOutput_");
 	}
 	else if (target == Target_GeometryShader)
 	{
-		m_inAttribPrefix = "geomInput_";
-		m_outAttribPrefix = "geomOutput_";
+		m_inAttribPrefix = MakeCached("geomInput_");
+		m_outAttribPrefix = MakeCached("geomOutput_");
 	}
 	else
 	{
-		m_inAttribPrefix = "";
-		m_outAttribPrefix = "";
+		m_inAttribPrefix = MakeCached("");
+		m_outAttribPrefix = MakeCached("");
 	}
 
     HLSLRoot* root = m_tree->GetRoot();
@@ -376,7 +1638,7 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
     HLSLFunction* entryFunction = FindFunction(root, m_entryName);
     if (entryFunction == NULL)
     {
-        Error("Entry point '%s' doesn't exist", m_entryName);
+        Error("Entry point '%s' doesn't exist", FetchCstr(m_stringLibrary,m_entryName));
         return false;
     }
 
@@ -422,6 +1684,9 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 
 	m_writer.WriteLine(0, "");
 
+	// Output precision to supress warnings on glslangValidator
+	m_writer.WriteLine(0, "precision highp float;\nprecision highp int; ");
+
     // Output the special function used to access rows in a matrix.
 	/*
     m_writer.WriteLine(0, "vec3 %s(mat3 m, int i) { return vec3( m[0][i], m[1][i], m[2][i] ); }", m_matrixRowFunction);
@@ -431,7 +1696,7 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
     // Output the special function used to do matrix cast for OpenGL 2.0
     if (m_version == Version_110)
     {
-        m_writer.WriteLine(0, "mat3 %s(mat4 m) { return mat3(m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]); }", m_matrixCtorFunction);
+        m_writer.WriteLine(0, "mat3 %s(mat4 m) { return mat3(m[0][0], m[0][1], m[0][2], m[1][0], m[1][1], m[1][2], m[2][0], m[2][1], m[2][2]); }", FetchCstr(m_stringLibrary, m_matrixCtorFunction));
     }
 
     // Output the special functions used for matrix multiplication lowering
@@ -448,29 +1713,30 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
     }
 	*/
 
+	///////////////////////////////////////////////////////////////////
 	// Output the special function used to emulate HLSL clip.
-	if (m_tree->NeedsFunction("f16tof32"))
+	if (needs_f16tof32)
 	{
-		m_writer.WriteLine(0, "float %s(uint x) { return ((x & 0x8000) << 16) | (((x & 0x7c00) + 0x1C000) << 13) | ((x & 0x03FF) << 13); }", m_f16tof32Function);
+		m_writer.WriteLine(0, "float %s(uint x) { return ((x & 0x8000) << 16) | (((x & 0x7c00) + 0x1C000) << 13) | ((x & 0x03FF) << 13); }", FetchCstr(m_stringLibrary, m_f16tof32Function));
 	}
 
-	if (m_tree->NeedsFunction("f32tof16"))
+	if (needs_f32tof16)
 	{		
-		m_writer.WriteLine(0, "uint %s(float x) { uint f32 = floatBitsToUint(val); return ((f32 >> 16) & 0x8000) | ((((f32 & 0x7f800000) - 0x38000000) >> 13) & 0x7c00) | ((f32 >> 13) & 0x03ff); }", m_f32tof16Function);
+		m_writer.WriteLine(0, "uint %s(float x) { uint f32 = floatBitsToUint(val); return ((f32 >> 16) & 0x8000) | ((((f32 & 0x7f800000) - 0x38000000) >> 13) & 0x7c00) | ((f32 >> 13) & 0x03ff); }", FetchCstr(m_stringLibrary, m_f32tof16Function));
 	}
 
 	// Output the special function used to emulate HLSL clip.
-	if (m_tree->NeedsFunction("clip"))
+	if (needs_clip)
 	{
 		const char* discard = m_target == Target_FragmentShader ? "discard" : "";
-		m_writer.WriteLine(0, "void %s(float x) { if (x < 0.0) %s;  }", m_clipFunction, discard);
-		m_writer.WriteLine(0, "void %s(vec2  x) { if (any(lessThan(x, vec2(0.0, 0.0)))) %s;  }", m_clipFunction, discard);
-		m_writer.WriteLine(0, "void %s(vec3  x) { if (any(lessThan(x, vec3(0.0, 0.0, 0.0)))) %s;  }", m_clipFunction, discard);
-		m_writer.WriteLine(0, "void %s(vec4  x) { if (any(lessThan(x, vec4(0.0, 0.0, 0.0, 0.0)))) %s;  }", m_clipFunction, discard);
+		m_writer.WriteLine(0, "void %s(float x) { if (x < 0.0) %s;  }", FetchCstr(m_stringLibrary, m_clipFunction), CHECK_CSTR(discard));
+		m_writer.WriteLine(0, "void %s(vec2  x) { if (any(lessThan(x, vec2(0.0, 0.0)))) %s;  }", FetchCstr(m_stringLibrary, m_clipFunction), CHECK_CSTR(discard));
+		m_writer.WriteLine(0, "void %s(vec3  x) { if (any(lessThan(x, vec3(0.0, 0.0, 0.0)))) %s;  }", FetchCstr(m_stringLibrary, m_clipFunction), CHECK_CSTR(discard));
+		m_writer.WriteLine(0, "void %s(vec4  x) { if (any(lessThan(x, vec4(0.0, 0.0, 0.0, 0.0)))) %s;  }", FetchCstr(m_stringLibrary, m_clipFunction), CHECK_CSTR(discard));
 	}
 
     // Output the special function used to emulate tex2Dlod.
-    if (m_tree->NeedsFunction("tex2Dlod"))
+    if (needs_tex2Dlod)
     {
         const char* function = "textureLod";
 
@@ -485,11 +1751,11 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
             function = "texture2DLodEXT";
         }
 
-        m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return %s(samp, texCoord.xy, texCoord.w);  }", m_tex2DlodFunction, function);
+        m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return %s(samp, texCoord.xy, texCoord.w);  }", FetchCstr(m_stringLibrary, m_tex2DlodFunction), CHECK_CSTR(function));
     }
 
     // Output the special function used to emulate tex2Dgrad.
-    if (m_tree->NeedsFunction("tex2Dgrad"))
+    if (needs_tex2Dgrad)
     {
         const char* function = "textureGrad";
 
@@ -504,45 +1770,48 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
             function = "texture2DGradEXT";
         }
 
-        m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec2 texCoord, vec2 dx, vec2 dy) { return %s(samp, texCoord, dx, dy);  }", m_tex2DgradFunction, function);
+        m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec2 texCoord, vec2 dx, vec2 dy) { return %s(samp, texCoord, dx, dy);  }", FetchCstr(m_stringLibrary, m_tex2DgradFunction), CHECK_CSTR(function));
     }
 
     // Output the special function used to emulate tex2Dbias.
-    if (m_tree->NeedsFunction("tex2Dbias"))
+    if (needs_tex2Dbias)
     {
         if (target == Target_FragmentShader)
         {
-            m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return %s(samp, texCoord.xy, texCoord.w);  }", m_tex2DbiasFunction, m_versionLegacy ? "texture2D" : "texture" );
+            m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return %s(samp, texCoord.xy, texCoord.w);  }", FetchCstr(m_stringLibrary, m_tex2DbiasFunction), CHECK_CSTR(m_versionLegacy ? "texture2D" : "texture") );
         }
         else
         {
             // Bias value is not supported in vertex shader.
-            m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return texture(samp, texCoord.xy);  }", m_tex2DbiasFunction );
+            m_writer.WriteLine(0, "vec4 %s(sampler2D samp, vec4 texCoord) { return texture(samp, texCoord.xy);  }", FetchCstr(m_stringLibrary, m_tex2DbiasFunction) );
         }
     }
 
     // Output the special function used to emulate tex2DMSfetch.
-    if (m_tree->NeedsFunction("tex2DMSfetch"))
+    if (needs_tex2DMSfetch)
     {
         m_writer.WriteLine(0, "vec4 tex2DMSfetch(sampler2DMS samp, ivec2 texCoord, int sample) {");
         m_writer.WriteLine(1, "return texelFetch(samp, texCoord, sample);");
         m_writer.WriteLine(0, "}");
     }
 
-	if (m_tree->NeedsExtension(USE_SAMPLESS))
+	if (needs_USE_SAMPLESS)
 	{
 		m_writer.WriteLine(0, "#extension GL_EXT_samplerless_texture_functions : enable");
+
+		m_writer.WriteLine(0, "");
+
+		WriteOpenglGetDimensionsOverloads(m_writer, RawStr(m_getDimensions));
 	}
 
-	if (m_tree->NeedsExtension(USE_INCLUDE))
+	if (needs_USE_INCLUDE)
 	{
 		m_writer.WriteLine(0, "#extension GL_GOOGLE_include_directive : enable");
 	}
 
 
-	if (m_tree->NeedsExtension(USE_NonUniformResourceIndex))
+	if (needs_USE_NonUniformResourceIndex)
 	{
-				
 		m_writer.WriteLine(0, "#extension GL_ARB_shader_ballot : enable");
 
 		m_writer.WriteLine(0, "uint NonUniformResourceIndex(uint textureIdx)");
@@ -557,49 +1826,53 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 		m_writer.WriteLine(0, "}");
 	}
 
-	if (m_tree->NeedsExtension(USE_Subgroup_Basic))
+	if (needs_USE_Subgroup_Basic)
 	{
 		m_writer.WriteLine(0, "#extension GL_KHR_shader_subgroup_basic : require");
 	}
 
-	if (m_tree->NeedsExtension(USE_Subgroup_Quad))
+	if (needs_USE_Subgroup_Quad)
 	{
 		m_writer.WriteLine(0, "#extension GL_KHR_shader_subgroup_arithmetic : require");
 	}
 
-	if (m_tree->NeedsExtension(USE_Subgroup_Ballot))
+	if (needs_USE_Subgroup_Ballot)
 	{
 		m_writer.WriteLine(0, "#extension GL_KHR_shader_subgroup_ballot : require");
 	}
 
-	if (m_tree->NeedsExtension(USE_Subgroup_Arithmetic))
+	if (needs_USE_Subgroup_Arithmetic)
 	{
 		m_writer.WriteLine(0, "#extension GL_KHR_shader_subgroup_quad : require");
 	}
 
+	if (needs_USE_ControlFlowAttributes)
+	{
+		m_writer.WriteLine(0, "#extension GL_EXT_control_flow_attributes : require");
+	}
 
     // Output the special function used to emulate tex3Dlod.
-    if (m_tree->NeedsFunction("tex3Dlod"))
+    if (needs_tex3Dlod)
     {
-        m_writer.WriteLine(0, "vec4 %s(sampler3D samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", m_tex3DlodFunction, m_versionLegacy ? "texture3D" : "texture" );
+        m_writer.WriteLine(0, "vec4 %s(sampler3D samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", FetchCstr(m_stringLibrary, m_tex3DlodFunction), CHECK_CSTR(m_versionLegacy ? "texture3D" : "texture") );
     }
 
     // Output the special function used to emulate texCUBEbias.
-    if (m_tree->NeedsFunction("texCUBEbias"))
+    if (needs_texCUBEbias)
     {
         if (target == Target_FragmentShader)
         {
-            m_writer.WriteLine(0, "vec4 %s(samplerCube samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", m_texCUBEbiasFunction, m_versionLegacy ? "textureCube" : "texture" );
+            m_writer.WriteLine(0, "vec4 %s(samplerCube samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", FetchCstr(m_stringLibrary, m_texCUBEbiasFunction), CHECK_CSTR(m_versionLegacy ? "textureCube" : "texture") );
         }
         else
         {
             // Bias value is not supported in vertex shader.
-            m_writer.WriteLine(0, "vec4 %s(samplerCube samp, vec4 texCoord) { return texture(samp, texCoord.xyz);  }", m_texCUBEbiasFunction );
+            m_writer.WriteLine(0, "vec4 %s(samplerCube samp, vec4 texCoord) { return texture(samp, texCoord.xyz);  }", FetchCstr(m_stringLibrary, m_texCUBEbiasFunction) );
         }
     }
 
 	// Output the special function used to emulate texCUBElod
-	if (m_tree->NeedsFunction("texCUBElod"))
+	if (needs_texCUBElod)
 	{
         const char* function = "textureLod";
 
@@ -614,7 +1887,7 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
             function = "textureCubeLodEXT";
         }
 
-		m_writer.WriteLine( 0, "vec4 %s(samplerCube samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", m_texCUBElodFunction, function);
+		m_writer.WriteLine( 0, "vec4 %s(samplerCube samp, vec4 texCoord) { return %s(samp, texCoord.xyz, texCoord.w);  }", FetchCstr(m_stringLibrary, m_texCUBElodFunction), CHECK_CSTR(function));
 	}
 
 	/*
@@ -639,30 +1912,34 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 
 	
 	
-    if (m_tree->NeedsFunction("sincos"))
+    if (needs_sincos)
     {
         const char* floatTypes[] = { "float", "vec2", "vec3", "vec4" };
         for (int i = 0; i < 4; ++i)
         {
-            m_writer.WriteLine(0, "void %s(%s x, out %s s, out %s c) { s = sin(x); c = cos(x); }", m_sinCosFunction,
-                floatTypes[i], floatTypes[i], floatTypes[i]);
+            m_writer.WriteLine(0, "void %s(%s x, out %s s, out %s c) { s = sin(x); c = cos(x); }", FetchCstr(m_stringLibrary, m_sinCosFunction),
+				CHECK_CSTR(floatTypes[i]), CHECK_CSTR(floatTypes[i]), CHECK_CSTR(floatTypes[i]));
         }
     }
 
-	if (m_tree->NeedsFunction("asfloat"))
+	if (needs_asfloat)
 	{
-		m_writer.WriteLine(0, "%s %s(%s x) { return uintBitsToFloat(x); }", "float", "asfloat", "uint");
-		m_writer.WriteLine(0, "%s %s(%s x) { return intBitsToFloat(x); }", "float", "asfloat", "int");
+		m_writer.WriteLine(0, "%s %s(%s x) { return uintBitsToFloat(x); }", CHECK_CSTR("float"), CHECK_CSTR("asfloat"), CHECK_CSTR("uint"));
+		m_writer.WriteLine(0, "%s %s(%s x) { return intBitsToFloat(x); }", CHECK_CSTR("float"), CHECK_CSTR("asfloat"), CHECK_CSTR("int"));
 	}
 
-	if (m_tree->NeedsFunction("asuint"))
+	if (needs_asuint)
 	{
-		m_writer.WriteLine(0, "%s %s(%s x) { return floatBitsToUint(x); }", "uint", "asuint", "float");
+		m_writer.WriteLine(0, "%s %s(%s x) { return floatBitsToUint(x); }", CHECK_CSTR("uint"), CHECK_CSTR("asuint"), CHECK_CSTR("float"));
+		m_writer.WriteLine(0, "%s %s(%s x) { return (x); }", CHECK_CSTR("uint"), CHECK_CSTR("asuint"), CHECK_CSTR("int"));
+		m_writer.WriteLine(0, "%s %s(%s x) { return (x); }", CHECK_CSTR("uint"), CHECK_CSTR("asuint"), CHECK_CSTR("uint"));
 	}
 
-	if (m_tree->NeedsFunction("asint"))
+	if (needs_asint)
 	{
-		m_writer.WriteLine(0, "%s %s(%s x) { return floatBitsToint(x); }", "int", "asint", "float");
+		m_writer.WriteLine(0, "%s %s(%s x) { return floatBitsToint(x); }", CHECK_CSTR("int"), CHECK_CSTR("asint"), CHECK_CSTR("float"));
+		m_writer.WriteLine(0, "%s %s(%s x) { return (x); }", CHECK_CSTR("int"), CHECK_CSTR("asint"), CHECK_CSTR("int"));
+		m_writer.WriteLine(0, "%s %s(%s x) { return (x); }", CHECK_CSTR("int"), CHECK_CSTR("asint"), CHECK_CSTR("uint"));
 	}
 	
 
@@ -674,10 +1951,36 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 	*/
 
     // Output the extension used for dFdx/dFdy in GLES2
-    if (m_version == Version_100_ES && (m_tree->NeedsFunction("ddx") || m_tree->NeedsFunction("ddy")))
+    if (m_version == Version_100_ES && (m_tree->NeedsFunction(MakeCached("ddx")) || m_tree->NeedsFunction(MakeCached("ddy"))))
     {
         m_writer.WriteLine(0, "#extension GL_OES_standard_derivatives : require");
     }
+
+	// output the custom row-major matrix multiplies.
+	{
+		eastl::vector < HLSLBaseType > lhsTypeVec;
+		eastl::vector < HLSLBaseType > rhsTypeVec;
+
+		m_tree->FindMatrixMultiplyTypes(lhsTypeVec, rhsTypeVec);
+
+		int num = (int)lhsTypeVec.size();
+		ASSERT_PARSER(rhsTypeVec.size() == num);
+
+		eastl::string funcName = RawStr(m_mulMatFunction);
+
+		for (int iter = 0; iter < num; iter++)
+		{
+			HLSLBaseType lhsType = lhsTypeVec[iter];
+			HLSLBaseType rhsType = rhsTypeVec[iter];
+
+			eastl::string lhsName = GetBaseTypeName(lhsType);
+			eastl::string rhsName = GetBaseTypeName(rhsType);
+
+			WriteOpenglMatrixMultiplyVariation(m_writer, funcName, lhsType, rhsType, lhsName, rhsName);
+		}
+	}
+
+
 
 	//m_writer.WriteLine(0, "#define VULKAN 1");
 
@@ -695,7 +1998,7 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 
 		if (!m_versionLegacy)
 		{
-			for (int i = 0; i < m_outputTargets; i++)
+			for (int i = 0; i < m_outputTypes.size(); i++)
 			{
 				m_writer.Write("layout(location = %d) out ", attributeCounter++);
 
@@ -715,6 +2018,54 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 
 				case HLSLBaseType_Float4:
 					m_writer.Write("vec4");
+					break;
+
+				case HLSLBaseType_Half:
+					m_writer.Write("mediump float");
+					break;
+
+				case HLSLBaseType_Half2:
+					m_writer.Write("mediump vec2");
+					break;
+
+				case HLSLBaseType_Half3:
+					m_writer.Write("mediump vec3");
+					break;
+
+				case HLSLBaseType_Half4:
+					m_writer.Write("mediump vec4");
+					break;
+
+				case HLSLBaseType_Min16Float:
+					m_writer.Write("mediump float");
+					break;
+
+				case HLSLBaseType_Min16Float2:
+					m_writer.Write("mediump vec2");
+					break;
+
+				case HLSLBaseType_Min16Float3:
+					m_writer.Write("mediump vec3");
+					break;
+
+				case HLSLBaseType_Min16Float4:
+					m_writer.Write("mediump vec4");
+					break;
+
+				case HLSLBaseType_Min10Float:
+					m_writer.Write("lowp float");
+					break;
+
+				case HLSLBaseType_Min10Float2:
+					m_writer.Write("lowp vec2");
+					break;
+
+				case HLSLBaseType_Min10Float3:
+					m_writer.Write("lowp vec3");
+					break;
+
+				case HLSLBaseType_Min10Float4:
+					m_writer.Write("lowp vec4");
 					break;
 
 				case HLSLBaseType_Int:
@@ -775,33 +2126,9 @@ bool GLSLGenerator::Generate(HLSLTree* tree, Target target, Version version, con
 
         //Error("Vertex shader must output a position");
     }
-	
 
     return !m_error;
 
-}
-
-void GLSLGenerator::PrintPreprocessors(int currentLine)
-{
-
-	for (int i = 0; i < 128; i++)
-	{
-		if (m_preprocessorPackage[i].m_line <= -100)
-			return;
-
-		if (m_preprocessorPackage[i].m_line <= 0)
-			continue;
-
-		if (m_writer.m_previousLine < m_preprocessorPackage[i].m_line &&  currentLine > m_preprocessorPackage[i].m_line)
-		{
-			//print it
-			m_writer.Write("%s", m_preprocessorPackage[i].m_storedPreprocessors);
-			m_writer.EndLine("");
-
-			m_writer.m_previousLine = m_preprocessorPackage[i].m_line;
-			m_preprocessorPackage[i].m_line = -1;
-		}
-	}
 }
 
 const char* GLSLGenerator::GetResult() const
@@ -809,64 +2136,17 @@ const char* GLSLGenerator::GetResult() const
     return m_writer.GetResult();
 }
 
-void GLSLGenerator::OutputExpressionList(HLSLExpression* expression, HLSLArgument* argument)
+void GLSLGenerator::OutputExpressionList(const eastl::vector<HLSLExpression*>& expressionVec, size_t start)
 {
-    int numExpressions = 0;
-	bool bPre = false;
-    while (expression != NULL)
-    {
-        if (!bPre && numExpressions > 0)
-        {
-            m_writer.Write(", ");
-        }
-
-		bPre = false;
-        
-        HLSLType* expectedType = NULL;
-        if (argument != NULL)
-        {
-			//handle preprocessor
-			if (argument->type.baseType == HLSLBaseType_Unknown)
-			{
-				argument = argument->nextArgument;
-				bPre = true;
-				continue;
-			}
-
-            expectedType = &argument->type;
-            argument = argument->nextArgument;
-        }
-
-		
-		//OutputExpression(expression, expectedType);
-		
-		if (expectedType)
+	for (size_t i = start; i < expressionVec.size(); i++)
+	{
+		if (i > start)
 		{
-			if (expectedType->baseType != expression->expressionType.baseType)
-			{
-				//if it is different, do type cast
-				//bPre = true;
-								
-				//m_writer.Write("%s(", getElementTypeAsStrGLSL(*expectedType));
-				OutputExpression(expression, expectedType);
-				//m_writer.Write(")");
-				expression = expression->nextExpression;
-			}
-			else
-			{
-				OutputExpression(expression, expectedType);
-				expression = expression->nextExpression;
-			}
+			m_writer.Write(", ");
 		}
-		else
-		{
-			OutputExpression(expression, expectedType);
-			expression = expression->nextExpression;
-		}
-		
-        
-        ++numExpressions;
-    }
+
+		OutputExpression(expressionVec[i]);
+	}
 }
 
 const HLSLType* commonScalarType(const HLSLType& lhs, const HLSLType& rhs)
@@ -874,8 +2154,8 @@ const HLSLType* commonScalarType(const HLSLType& lhs, const HLSLType& rhs)
     if (!isScalarType(lhs) || !isScalarType(rhs))
         return NULL;
 
-    if (lhs.baseType == HLSLBaseType_Float || lhs.baseType == HLSLBaseType_Half ||
-        rhs.baseType == HLSLBaseType_Float || rhs.baseType == HLSLBaseType_Half)
+    if (lhs.baseType == HLSLBaseType_Float || lhs.baseType == HLSLBaseType_Half || lhs.baseType == HLSLBaseType_Min16Float || lhs.baseType == HLSLBaseType_Min10Float ||
+        rhs.baseType == HLSLBaseType_Float || rhs.baseType == HLSLBaseType_Half || rhs.baseType == HLSLBaseType_Min16Float || rhs.baseType == HLSLBaseType_Min10Float)
         return &kFloatType;
 
     if (lhs.baseType == HLSLBaseType_Uint || rhs.baseType == HLSLBaseType_Uint)
@@ -894,22 +2174,28 @@ void GLSLGenerator::OutputExpressionForBufferArray(HLSLExpression* expression, c
 {
 	if (expression->nodeType == HLSLNodeType_ArrayAccess)
 	{
-		if (expression->expressionType.baseType == HLSLBaseType_UserDefined && expression->expressionType.typeName)
+		if (expression->expressionType.baseType == HLSLBaseType_UserDefined && expression->expressionType.typeName.IsNotEmpty())
 		{
-			m_writer.Write(".%s_Data", expression->expressionType.typeName);
+			m_writer.Write(".%s_Data", FetchCstr(m_stringLibrary, expression->expressionType.typeName));
 		}
 	}
 }
 
-void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType* dstType)
+void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType* dstType, bool allowCast)
 {
+	HLSLType expType = expression->expressionType;
 
-    bool cast = dstType != NULL && !GetCanImplicitCast(expression->expressionType, *dstType);
+    bool cast = dstType != NULL && !GetCanImplicitCast(expType, *dstType);
     if (expression->nodeType == HLSLNodeType_CastingExpression)
     {
         // No need to include a cast if the expression is already doing it.
         cast = false;
     }
+
+	if (!allowCast)
+	{
+		cast = false;
+	}
 
     if (cast)
     {
@@ -923,46 +2209,34 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
     {
         OutputBufferAccessExpression(bufferAccess, expression, expression->expressionType, 0);
     }
-	else if (expression->childExpression)
+	else if (expression->nodeType == HLSLNodeType_InitListExpression)
 	{
+		HLSLInitListExpression* initList = static_cast<HLSLInitListExpression*>(expression);
 		m_writer.Write("{");
-		OutputExpressionList(expression->childExpression);
+		OutputExpressionList(initList->initExpressions);
 		m_writer.Write("}");
 	}
     else if (expression->nodeType == HLSLNodeType_IdentifierExpression)
     {
-		/*
-		if (expression->expressionType.baseType == HLSLBaseType_InputPatch)
-		{
+		HLSLIdentifierExpression* identifierExpression = static_cast<HLSLIdentifierExpression*>(expression);
+		OutputIdentifierExpression(identifierExpression);
 
+		if (expression->functionExpression)
+		{
+			OutputExpression(expression->functionExpression);
 		}
-		else
-		{
-		*/
-			HLSLIdentifierExpression* identifierExpression = static_cast<HLSLIdentifierExpression*>(expression);
-			OutputIdentifier(identifierExpression->name);
-
-
-			if (expression->functionExpression)
-			{
-				OutputExpression(expression->functionExpression);
-			}
-		//}
-		//}
-
-        
     }
     else if (expression->nodeType == HLSLNodeType_ConstructorExpression)
     {
         HLSLConstructorExpression* constructorExpression = static_cast<HLSLConstructorExpression*>(expression);
-        m_writer.Write("%s(", GetTypeName(constructorExpression->type));
-        OutputExpressionList(constructorExpression->argument);
+        m_writer.Write("%s(", CHECK_CSTR(GetTypeName(constructorExpression->expressionType)));
+        OutputExpressionList(constructorExpression->params);
         m_writer.Write(")");
     }
     else if (expression->nodeType == HLSLNodeType_CastingExpression)
     {
         HLSLCastingExpression* castingExpression = static_cast<HLSLCastingExpression*>(expression);
-        OutputCast(castingExpression->type);
+        OutputCast(castingExpression->expressionType);
         m_writer.Write("(");
         OutputExpression(castingExpression->expression);
         m_writer.Write(")");
@@ -972,15 +2246,17 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
         HLSLLiteralExpression* literalExpression = static_cast<HLSLLiteralExpression*>(expression);
         switch (literalExpression->type)
         {
-        case HLSLBaseType_Half:
-        case HLSLBaseType_Float:
-            {
-                // Don't use printf directly so that we don't use the system locale.
-                char buffer[64];
-                String_FormatFloat(buffer, sizeof(buffer), literalExpression->fValue);
-                m_writer.Write("%s", buffer);
-            }
-            break;
+		case HLSLBaseType_Half:
+		case HLSLBaseType_Float:
+		case HLSLBaseType_Min16Float:
+		case HLSLBaseType_Min10Float:
+		{
+			// Don't use printf directly so that we don't use the system locale.
+			char buffer[64];
+			String_FormatFloat(buffer, sizeof(buffer), literalExpression->fValue);
+			m_writer.Write("%s", CHECK_CSTR(buffer));
+		}
+		break;
         case HLSLBaseType_Int:
             m_writer.Write("%d", literalExpression->iValue);
             break;
@@ -988,10 +2264,10 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
             m_writer.Write("%uu", literalExpression->uiValue);
 	    break;
 	case HLSLBaseType_Bool:
-            m_writer.Write("%s", literalExpression->bValue ? "true" : "false");
+            m_writer.Write("%s", CHECK_CSTR(literalExpression->bValue ? "true" : "false"));
             break;
         default:
-            ASSERT(0);
+			ASSERT_PARSER(0);
         }
     }
     else if (expression->nodeType == HLSLNodeType_UnaryExpression)
@@ -1014,13 +2290,13 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
         m_writer.Write("(");
         if (pre)
         {
-            m_writer.Write("%s", op);
+            m_writer.Write("%s", CHECK_CSTR(op));
             OutputExpression(unaryExpression->expression, dstType);
         }
         else
         {
             OutputExpression(unaryExpression->expression, dstType);
-            m_writer.Write("%s", op);
+            m_writer.Write("%s", CHECK_CSTR(op));
         }
         m_writer.Write(")");
     }
@@ -1031,7 +2307,6 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
         const HLSLType* dstType1 = NULL;
         const HLSLType* dstType2 = NULL;
 
-		//
 		bool vectorExpression = isVectorType( binaryExpression->expression1->expressionType ) || isVectorType( binaryExpression->expression2->expressionType );
 		if( vectorExpression && isCompareOp( binaryExpression->binaryOp ))
 		{
@@ -1044,7 +2319,7 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			case HLSLBinaryOp_Equal:        m_writer.Write("equal(");				break;
 			case HLSLBinaryOp_NotEqual:     m_writer.Write("notEqual(");			break;
 			default:
-				ASSERT(0); // is so, check isCompareOp
+				ASSERT_PARSER(0); // is so, check isCompareOp
 			}
 
 			if( isVectorType( binaryExpression->expression1->expressionType ) && isScalarType( binaryExpression->expression2->expressionType ) )
@@ -1088,133 +2363,108 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			case HLSLBinaryOp_LeftShift:    op = " << "; dstType1 = dstType2 = commonScalarType(binaryExpression->expression1->expressionType, binaryExpression->expression2->expressionType); break;
 			case HLSLBinaryOp_RightShift:   op = " >> "; dstType1 = dstType2 = commonScalarType(binaryExpression->expression1->expressionType, binaryExpression->expression2->expressionType); break;
 			case HLSLBinaryOp_Modular:      op = " % "; dstType1 = dstType2 = commonScalarType(binaryExpression->expression1->expressionType, binaryExpression->expression2->expressionType); break;
+			case HLSLBinaryOp_Comma:        op = " , "; dstType1 = &binaryExpression->expression1->expressionType; dstType2 = &binaryExpression->expression2->expressionType; break;
 
 			default:
-				ASSERT(0);
+				ASSERT_PARSER(0);
 			}
 
 			// Exception Handling for imageStore, this might make errors
 			// Need to change better form
-			//HLSLArrayAccess* ArrayAcess = static_cast<HLSLArrayAccess*>(binaryExpression->expression1);
-
-			//if (binaryExpression->binaryOp == HLSLBinaryOp_Assign && ArrayAcess->array != NULL && ArrayAcess->array->nodeType == HLSLNodeType_RWTextureStateExpression)
-			if (binaryExpression->binaryOp == HLSLBinaryOp_Assign && binaryExpression->expression1->expressionType.baseType >= HLSLBaseType_RWTexture1D && binaryExpression->expression1->expressionType.baseType <= HLSLBaseType_RWTexture3D)
+			HLSLArrayAccess* arrayAccess = static_cast<HLSLArrayAccess*>(binaryExpression->expression1);
+			if ((binaryExpression->binaryOp == HLSLBinaryOp_Assign) && (binaryExpression->expression1->nodeType == HLSLArrayAccess::s_type) && IsRWTexture(arrayAccess->array->expressionType.baseType))
 			{
-				//HLSLRWTextureStateExpression* rwTextureStateExpression = static_cast<HLSLRWTextureStateExpression*>(ArrayAcess->array);
-				//HLSLTextureStateExpression* textureStateExpression = static_cast<HLSLTextureStateExpression*>(ArrayAcess->array);
+				m_writer.Write("imageStore(");
 
-				HLSLTextureStateExpression* textureStateExpression = static_cast<HLSLTextureStateExpression*>(binaryExpression->expression1);
+				OutputExpression(arrayAccess->array);
 
-				
-				if (IsRWTexture(textureStateExpression->expressionType.baseType))
+				switch (arrayAccess->array->expressionType.baseType)
 				{
-					m_writer.Write("imageStore(");
-
-					m_writer.Write("%s", textureStateExpression->name);
-
-					if (textureStateExpression->bArray)
-					{
-						for (int i = 0; i < (int)textureStateExpression->arrayDimension; i++)
-						{
-							if (textureStateExpression->arrayExpression)
-							{
-								m_writer.Write("[");
-								OutputExpressionList(textureStateExpression->arrayExpression);
-								m_writer.Write("]");
-							}
-							else if (textureStateExpression->arrayIndex[i] > 0)
-								m_writer.Write("[%u]", textureStateExpression->arrayIndex[i]);
-							else
-								m_writer.Write("[]");
-						}
-					}
-
-					switch (textureStateExpression->expressionType.baseType)
-					{
-					case HLSLBaseType_RWTexture1D:
-						m_writer.Write(", int(", textureStateExpression->name);
-						break;
-					case HLSLBaseType_RWTexture1DArray:
-						m_writer.Write(", ivec2(", textureStateExpression->name);
-						break;
-					case HLSLBaseType_RWTexture2D:
-						m_writer.Write(", ivec2(", textureStateExpression->name);
-						break;
-					case HLSLBaseType_RWTexture2DArray:
-						m_writer.Write(", ivec3(", textureStateExpression->name);
-						break;
-					case HLSLBaseType_RWTexture3D:
-						m_writer.Write(", ivec3(", textureStateExpression->name);
-						break;
-					default:
-						break;
-					}
-
-					//OutputExpression(ArrayAcess->index);
-					if (textureStateExpression->indexExpression)
-					{						
-						OutputExpressionList(textureStateExpression->indexExpression);						
-					}					
-
-					m_writer.Write("), ");
-
-
-					switch (binaryExpression->expression2->expressionType.baseType)
-					{
-					case HLSLBaseType_Float:
-						m_writer.Write("vec4(");
-						OutputExpression(binaryExpression->expression2, &binaryExpression->expression2->expressionType);
-						m_writer.Write(", 0.0, 0.0, 0.0)");
-						break;
-					case HLSLBaseType_Float2:
-						m_writer.Write("vec4(");
-						OutputExpression(binaryExpression->expression2, &binaryExpression->expression2->expressionType);
-						m_writer.Write(", 0.0, 0.0)");
-						break;
-					case HLSLBaseType_Float3:
-						m_writer.Write("vec3(");
-						OutputExpression(binaryExpression->expression2, &binaryExpression->expression2->expressionType);
-						m_writer.Write(", 0.0)");
-						break;
-					case HLSLBaseType_Float4:
-						OutputExpression(binaryExpression->expression2, &binaryExpression->expression2->expressionType);
-						break;
-					default:
-						OutputExpression(binaryExpression->expression2, &binaryExpression->expression2->expressionType);
-						break;
-					}
-
-					
-					m_writer.Write(")");
+				case HLSLBaseType_RWTexture1D:
+					m_writer.Write(", int(");
+					break;
+				case HLSLBaseType_RWTexture1DArray:
+					m_writer.Write(", ivec2(");
+					break;
+				case HLSLBaseType_RWTexture2D:
+					m_writer.Write(", ivec2(");
+					break;
+				case HLSLBaseType_RWTexture2DArray:
+					m_writer.Write(", ivec3(");
+					break;
+				case HLSLBaseType_RWTexture3D:
+					m_writer.Write(", ivec3(");
+					break;
+				default:
+					break;
 				}
-				else
+
+				OutputExpression(arrayAccess->index);
+
+				m_writer.Write("), ");
+
+				HLSLBaseType elementType = GetScalarBaseType(arrayAccess->expressionType.baseType);
+				HLSLBaseType vecType = HLSLBaseType(elementType + 3 * 4 + 0);
+				eastl::string elementName = GetBaseTypeName(vecType);
+
+				switch (binaryExpression->expression2->expressionType.baseType)
 				{
-					m_writer.Write("(");
-					OutputExpression(binaryExpression->expression1, dstType1);
-					m_writer.Write("%s", op);
-					OutputExpression(binaryExpression->expression2, dstType2);
+				case HLSLBaseType_Float:
+				case HLSLBaseType_Half:
+				case HLSLBaseType_Min16Float:
+				case HLSLBaseType_Min10Float:
+					m_writer.Write("%s(", elementName.c_str());
+					OutputExpression(binaryExpression->expression2);
+					m_writer.Write(", 0.0, 0.0, 0.0)");
+					break;
+				case HLSLBaseType_Float2:
+				case HLSLBaseType_Half2:
+				case HLSLBaseType_Min16Float2:
+				case HLSLBaseType_Min10Float2:
+					m_writer.Write("%s(", elementName.c_str());
+					OutputExpression(binaryExpression->expression2);
+					m_writer.Write(", 0.0, 0.0)");
+					break;
+				case HLSLBaseType_Float3:
+				case HLSLBaseType_Half3:
+				case HLSLBaseType_Min16Float3:
+				case HLSLBaseType_Min10Float3:
+					m_writer.Write("%s(",elementName.c_str());
+					OutputExpression(binaryExpression->expression2);
+					m_writer.Write(", 0.0)");
+					break;
+				case HLSLBaseType_Float4:
+				case HLSLBaseType_Half4:
+				case HLSLBaseType_Min16Float4:
+				case HLSLBaseType_Min10Float4:
+					m_writer.Write("%s(", elementName.c_str());
+					OutputExpression(binaryExpression->expression2);
 					m_writer.Write(")");
-				}				
-				
+					break;
+				default:
+					m_writer.Write("%s(", elementName.c_str());
+					OutputExpression(binaryExpression->expression2);
+					m_writer.Write(")");
+					break;
+				}
+				m_writer.Write(")");
 			}
 			else
 			{
 				m_writer.Write("(");
 				OutputExpression(binaryExpression->expression1, dstType1);
-				m_writer.Write("%s", op);
+				m_writer.Write("%s", CHECK_CSTR(op));
 				OutputExpression(binaryExpression->expression2, dstType2);
 				m_writer.Write(")");
 			}
-
-			
 		}
-    }
-    else if (expression->nodeType == HLSLNodeType_ConditionalExpression)
-    {
-        HLSLConditionalExpression* conditionalExpression = static_cast<HLSLConditionalExpression*>(expression);
+	}
+	else if (expression->nodeType == HLSLNodeType_ConditionalExpression)
+	{
+		HLSLConditionalExpression* conditionalExpression = static_cast<HLSLConditionalExpression*>(expression);
 		if( isVectorType( conditionalExpression->condition->expressionType ) )
 		{
-			m_writer.Write( "%s", m_bvecTernary );
+			m_writer.Write( "%s", FetchCstr(m_stringLibrary, m_bvecTernary) );
 			m_writer.Write( "( " );
 			OutputExpression( conditionalExpression->condition );
 			m_writer.Write( ", " );
@@ -1233,11 +2483,10 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			OutputExpression( conditionalExpression->falseExpression, dstType );
 			m_writer.Write( "))" );
 		}
-    }
-    else if (expression->nodeType == HLSLNodeType_MemberAccess)
-    {
-
-        HLSLMemberAccess* memberAccess = static_cast<HLSLMemberAccess*>(expression);
+	}
+	else if (expression->nodeType == HLSLNodeType_MemberAccess)
+	{
+		HLSLMemberAccess* memberAccess = static_cast<HLSLMemberAccess*>(expression);
 
 		HLSLStruct* structure = FindStruct(m_tree->GetRoot(), memberAccess->object->expressionType.typeName);
 
@@ -1256,7 +2505,7 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 
 		if (memberAccess->object->expressionType.baseType == HLSLBaseType_InputPatch || memberAccess->object->expressionType.baseType == HLSLBaseType_OutputPatch)
 		{
-			ASSERT(structure != NULL);
+			ASSERT_PARSER(structure != NULL);
 			
 			
 			HLSLStructField* field = structure->field;
@@ -1266,15 +2515,14 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 				{
 					//find it from input
 					char attribName[64];
-					String_Printf(attribName, 64, "%s%s", m_inAttribPrefix, field->semantic);
-					m_writer.Write("%s", attribName);
+					String_Printf(attribName, 64, "%s%s", FetchCstr(m_stringLibrary, m_inAttribPrefix), FetchCstr(m_stringLibrary, field->semantic));
+					m_writer.Write("%s", CHECK_CSTR(attribName));
 
 					if (m_target == Target_HullShader)
 					{
 						//Every input for hull shader should be array
 						m_writer.Write("[0]");
 					}
-					
 
 					break;
 				}				
@@ -1316,14 +2564,14 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 					}
 					else if (String_Equal(structure->name, m_geoOutputdataType))
 					{
-						m_writer.Write("%s%s", m_outAttribPrefix, field->semantic);
+						m_writer.Write("%s%s", FetchCstr(m_stringLibrary, m_outAttribPrefix), FetchCstr(m_stringLibrary, field->semantic));
 					}
 					else
 					{
 						m_writer.Write("(");
 						OutputExpression(memberAccess->object);
 						m_writer.Write(")");
-						m_writer.Write(".%s", memberAccess->field);
+						m_writer.Write(".%s", FetchCstr(m_stringLibrary, memberAccess->field));
 					}
 
 					break;
@@ -1343,6 +2591,8 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 		}
         else if (memberAccess->object->expressionType.baseType == HLSLBaseType_Half  ||
             memberAccess->object->expressionType.baseType == HLSLBaseType_Float ||
+			memberAccess->object->expressionType.baseType == HLSLBaseType_Min16Float ||
+			memberAccess->object->expressionType.baseType == HLSLBaseType_Min10Float ||
             memberAccess->object->expressionType.baseType == HLSLBaseType_Int   ||
             memberAccess->object->expressionType.baseType == HLSLBaseType_Uint)
         {
@@ -1350,7 +2600,7 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
             OutputExpression(memberAccess->object);
             m_writer.Write(")");
 
-			m_writer.Write(".%s", memberAccess->field);
+			m_writer.Write(".%s", FetchCstr(m_stringLibrary, memberAccess->field));
         }
         else
         {
@@ -1363,16 +2613,22 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
                 memberAccess->object->expressionType.baseType == HLSLBaseType_Float4x4 ||
 				memberAccess->object->expressionType.baseType == HLSLBaseType_Half2x2 ||
 				memberAccess->object->expressionType.baseType == HLSLBaseType_Half3x3 ||
-				memberAccess->object->expressionType.baseType == HLSLBaseType_Half4x4 )
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Half4x4 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min16Float2x2 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min16Float3x3 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min16Float4x4 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min10Float2x2 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min10Float3x3 ||
+				memberAccess->object->expressionType.baseType == HLSLBaseType_Min10Float4x4 )
             {
                 // Handle HLSL matrix "swizzling".
                 // TODO: Properly handle multiple element selection such as _m00_m12
-                const char* n = memberAccess->field;
+                const char* n = RawStr(memberAccess->field);
                 while (n[0] != 0)
                 {
                     if ( n[0] != '_' )
                     {
-                        ASSERT(0);
+						ASSERT_PARSER(0);
                         break;
                     }
                     ++n;
@@ -1389,14 +2645,14 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
                     }
                     else
                     {
-                        ASSERT(0);
+						ASSERT_PARSER(0);
                         break;
                     }
                 }
             }
             else
             {
-                m_writer.Write(".%s", memberAccess->field);
+                m_writer.Write(".%s", FetchCstr(m_stringLibrary, memberAccess->field));
             }
 
         }
@@ -1414,12 +2670,19 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			arrayAccessInMatrix = NULL;
 
 		if (arrayAccessInMatrix != NULL && !arrayAccessInMatrix->array->expressionType.array &&
-			(arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Float2x2 ||
+			(	arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Float2x2 ||
 				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Float3x3 ||
 				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Float4x4 ||
 				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Half2x2 ||
 				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Half3x3 ||
-				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Half4x4))
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Half4x4 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min16Float2x2 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min16Float3x3 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min16Float4x4 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min10Float2x2 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min10Float3x3 ||
+				arrayAccessInMatrix->array->expressionType.baseType == HLSLBaseType_Min10Float4x4)
+			)
 		{
 			// GLSL access a matrix as m[c][r] while HLSL is m[r][c], so use our
 			// special row access function to convert.
@@ -1464,149 +2727,393 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			m_writer.Write("]");
 						
 		}
-        else
-        {
-			///!!!!!!!!!!!!!!!!
-            OutputExpression(arrayAccess->array);
-			
-            m_writer.Write("[");
-            OutputExpression(arrayAccess->index);
-            m_writer.Write("]");
-
-			if (arrayAccess->identifier)
+		else if (IsTexture(arrayAccess->array->expressionType))
+		{
+			bool isImageLoad = false;
+			if (HLSLBaseType_RWTexture1D <= arrayAccess->array->expressionType.baseType  &&
+				HLSLBaseType_RWTexture3D >= arrayAccess->array->expressionType.baseType)
 			{
-				m_writer.Write(".%s_Data", arrayAccess->identifier);
+				isImageLoad = true;
 			}
 
-			
-        }
+			m_writer.Write(isImageLoad ? "imageLoad(" : "texelFetch(");
 
+			OutputExpression(arrayAccess->array);
+
+			m_writer.Write(", ");
+
+			switch (arrayAccess->array->expressionType.baseType)
+			{
+
+			case HLSLBaseType_Texture1D:
+			case HLSLBaseType_RWTexture1D:
+
+				m_writer.Write("(");
+				OutputExpression(arrayAccess->index);
+
+				////offset
+				//if (arrayAccess->index->nextExpression && arrayAccess->index->nextExpression->nextExpression)
+				//{
+				//	m_writer.Write("+");
+				//	OutputExpression(arrayAccess->index->nextExpression->nextExpression);
+				//}
+
+				m_writer.Write(").x, ");
+
+
+				if (!isImageLoad)
+				{
+					//if (arrayAccess->index->nextExpression)
+					//{
+					//	m_writer.Write("(");
+					//	OutputExpression(arrayAccess->index->nextExpression);
+					//	m_writer.Write(").y");
+					//}
+					//else
+						m_writer.Write("0");
+				}						
+				break;
+
+			case HLSLBaseType_Texture1DArray:
+			case HLSLBaseType_RWTexture1DArray:
+
+				m_writer.Write("ivec2(");
+				OutputExpression(arrayAccess->index);
+				m_writer.Write(").xy, ");
+
+
+				if (!isImageLoad)
+				{
+					//if (arrayAccess->index->nextExpression)
+					//{
+					//	m_writer.Write("(");
+					//	OutputExpression(arrayAccess->index->nextExpression);
+					//	m_writer.Write(").z");
+					//}
+					//else
+						m_writer.Write("0");
+				}
+						
+				break;
+
+			case HLSLBaseType_Texture2D:
+			case HLSLBaseType_RWTexture2D:
+
+				m_writer.Write("ivec2(");
+				OutputExpression(arrayAccess->index);
+				m_writer.Write(").xy");
+
+				//offset
+				//if (arrayAccess->index->nextExpression && arrayAccess->index->nextExpression->nextExpression)
+				//{
+				//	m_writer.Write("+");
+				//	OutputExpression(arrayAccess->index->nextExpression->nextExpression);
+				//}
+
+				if (!isImageLoad)
+				{
+					m_writer.Write(", ");
+
+					//if (arrayAccess->index->nextExpression)
+					//{
+					//	m_writer.Write("(");
+					//	OutputExpression(arrayAccess->index->nextExpression);
+					//	m_writer.Write(").z");
+					//}
+					//else
+						m_writer.Write("0");
+				}
+				break;
+
+			case HLSLBaseType_Texture2DMS:
+						
+				m_writer.Write("ivec2(");
+				OutputExpression(arrayAccess->index);
+				m_writer.Write(").xy");
+
+				//offset
+
+				//if (arrayAccess->index->nextExpression == NULL)
+				//{
+					m_writer.Write("+ ivec2(0, 0), 1)");
+				//}
+				//else
+				//{
+				//	if (arrayAccess->index->nextExpression->nextExpression)
+				//	{
+				//		m_writer.Write("+");
+				//		OutputExpression(arrayAccess->index->nextExpression->nextExpression);
+				//	}
+
+				//	if (!isImageLoad)
+				//	{
+				//		m_writer.Write(", ");
+
+				//		m_writer.Write("int(");
+				//		OutputExpression(arrayAccess->index->nextExpression);
+				//		m_writer.Write(")");
+				//	}
+				//}
+
+						
+				break;
+
+			case HLSLBaseType_Texture2DArray:
+			case HLSLBaseType_RWTexture2DArray:
+
+				m_writer.Write("ivec3(");
+				OutputExpression(arrayAccess->index);
+				m_writer.Write(").xyz, ");
+
+
+				if (!isImageLoad)
+				{
+					//if (arrayAccess->index->nextExpression)
+					//{
+					//	m_writer.Write("(");
+					//	OutputExpression(arrayAccess->index->nextExpression);
+					//	m_writer.Write(").w");
+					//}
+					//else
+						m_writer.Write("0");
+				}						
+				break;
+
+			//case HLSLBaseType_Texture2DMSArray:
+
+
+			//	m_writer.Write("ivec3(");
+			//	OutputExpression(arrayAccess->index);
+			//	m_writer.Write(").xyz, ");
+
+			//	m_writer.Write("int(");
+			//	OutputExpression(arrayAccess->index->nextExpression);
+			//	m_writer.Write(")");
+			//	break;
+
+			case HLSLBaseType_Texture3D:
+			case HLSLBaseType_RWTexture3D:
+
+				m_writer.Write("ivec3(");
+				OutputExpression(arrayAccess->index);
+				m_writer.Write(").xyz");
+
+				//offset
+				//if (arrayAccess->index->nextExpression && arrayAccess->index->nextExpression->nextExpression)
+				//{
+				//	m_writer.Write("+");
+				//	OutputExpression(arrayAccess->index->nextExpression->nextExpression);
+				//}
+
+				m_writer.Write(", ");
+
+
+				if (!isImageLoad)
+				{
+					//if (arrayAccess->index->nextExpression)
+					//{
+					//	m_writer.Write("(");
+					//	OutputExpression(arrayAccess->index->nextExpression);
+					//	m_writer.Write(").w");
+					//}
+					//else
+						m_writer.Write("0");
+				}						
+				break;
+			default:
+				break;
+			}
+
+			m_writer.Write(")");
+		}
+        else
+        {
+			OutputExpression(arrayAccess->array);
+
+			m_writer.Write("[");
+			OutputExpression(arrayAccess->index);
+			m_writer.Write("]");
+
+			if (arrayAccess->identifier.IsNotEmpty())
+			{
+				m_writer.Write(".%s_Data", FetchCstr(m_stringLibrary, arrayAccess->identifier));
+			}
+        }
     }
     else if (expression->nodeType == HLSLNodeType_FunctionCall)
     {
-        HLSLFunctionCall* functionCall = static_cast<HLSLFunctionCall*>(expression);
+		HLSLFunctionCall* functionCall = static_cast<HLSLFunctionCall*>(expression);
+		const eastl::vector<HLSLExpression*>& params = functionCall->params;
+		const eastl::vector <HLSLArgument*>& args = functionCall->function->args;
 
         // Handle intrinsic funtions that are different between HLSL and GLSL.
-        bool handled = false;
-        const char* functionName = functionCall->function->name;
-
+        CachedString functionName = functionCall->function->name;
         if (String_Equal(functionName, "mul"))
         {
-            HLSLExpression* argument[2];
-            if (GetFunctionArguments(functionCall, argument, 2) != 2)
-            {
-                Error("mul expects 2 arguments");
-                return;
-            }
+			ASSERT_PARSER(params.size() == 2);
+			ASSERT_PARSER(args.size() == 2);
 
-            const HLSLType& type0 = functionCall->function->argument->type;
-            const HLSLType& type1 = functionCall->function->argument->nextArgument->type;
+			const HLSLType& type0 = args[0]->type;
+			const HLSLType& type1 = args[1]->type;
 
-            const char* prefix = (m_options.flags & Flag_LowerMatrixMultiplication) ? m_matrixMulFunction : "";
+			bool isCustom = HLSLTree::IsCustomMultiply(type0.baseType, type1.baseType);
+
+			if (isCustom)
+			{
+				eastl::string matrixFunc = FetchCstr(m_stringLibrary, m_mulMatFunction);
+
+				m_writer.Write("%s(", CHECK_CSTR(matrixFunc.c_str()));
+				OutputExpression(params[0]);
+				m_writer.Write(",");
+				OutputExpression(params[1]);
+				m_writer.Write(")");
+			}
+			else
+			{
+				// standard multiply
+				m_writer.Write("(");
+				OutputExpression(params[0]);
+				m_writer.Write(")*(");
+				OutputExpression(params[1]);
+				m_writer.Write(")");
+			}
+			// These functions don't work any more because they rely on other code that has been removed.
+			// The original code also wasn't robust. It only handled floats (not halfs or other types), and it
+			// didn't work with layout(row_major). The original code was based on taking column major code and
+			// applying transposes. But it's much cleaner to just switch everything to row major so it matches
+			// HLSL.
+#if 0
+			eastl::string matrixFunc = FetchCstr(m_stringLibrary, m_matrixMulFunction);
+            const char* prefix = (m_options.flags & Flag_LowerMatrixMultiplication) ? matrixFunc.c_str() : "";
             const char* infix = (m_options.flags & Flag_LowerMatrixMultiplication) ? "," : "*";
 
             if (m_options.flags & Flag_PackMatrixRowMajor)
             {
-                m_writer.Write("%s((", prefix);
+                m_writer.Write("%s((", CHECK_CSTR(prefix));
                 OutputExpression(argument[1], &type1);
-                m_writer.Write(")%s(", infix);
+                m_writer.Write(")%s(", CHECK_CSTR(infix));
                 OutputExpression(argument[0], &type0);
                 m_writer.Write("))");
             }
             else
             {
-                m_writer.Write("%s((", prefix);
+                m_writer.Write("%s((", CHECK_CSTR(prefix));
                 OutputExpression(argument[0], &type0);
-                m_writer.Write(")%s(", infix);
+                m_writer.Write(")%s(", CHECK_CSTR(infix));
                 OutputExpression(argument[1], &type1);
                 m_writer.Write("))");
             }
-
-            handled = true;
+#endif
         }
         else if (String_Equal(functionName, "saturate"))
         {
-            HLSLExpression* argument[1];
-            if (GetFunctionArguments(functionCall, argument, 1) != 1)
-            {
-                Error("saturate expects 1 argument");
-                return;
-            }
-            m_writer.Write("clamp(");
-            OutputExpression(argument[0]);
+			ASSERT_PARSER(params.size() == 1);
+
+			m_writer.Write("clamp(");
+            OutputExpression(params[0]);
             m_writer.Write(", 0.0, 1.0)");
-            handled = true;
-        }	
+        }
 		else if (String_Equal(functionName, "rcp"))
 		{
-			HLSLExpression* argument[1];
-			if (GetFunctionArguments(functionCall, argument, 1) != 1)
-			{
-				Error("rcp expects 1 argument");
-				return;
-			}
+			ASSERT_PARSER(params.size() == 1);
+
 			m_writer.Write("1 / ");
-			OutputExpression(argument[0]);
-			handled = true;
+			OutputExpression(params[0]);
+		}
+		else if (String_Equal(functionName, "rsqrt"))
+		{
+			ASSERT_PARSER(params.size() == 1);
+
+			m_writer.Write("inversesqrt(");
+			OutputExpression(params[0]);
+			m_writer.Write(")");
+		}
+		else if (String_Equal(functionName, "any") || String_Equal(functionName, "all"))
+		{
+			ASSERT_PARSER(params.size() == 1);
+
+			HLSLBaseType currType = params[0]->expressionType.baseType;
+
+			// if it is a bool type, just do regular any()
+			if (HLSLBaseType_Bool <= currType && currType <= HLSLBaseType_Bool4x4)
+			{
+				m_writer.Write("%s", RawStr(functionName));
+				m_writer.Write("(");
+				OutputExpression(params[0]);
+				m_writer.Write(")");
+			}
+			else
+			{
+				m_writer.Write("%s", RawStr(functionName));
+				m_writer.Write("(");
+				m_writer.Write("notEqual");
+				m_writer.Write("(");
+				OutputExpression(params[0]);
+				m_writer.Write(",");
+
+				const char * strType = GetTypeName(params[0]->expressionType);
+
+				m_writer.Write("%s(0)",strType);
+				m_writer.Write(")");
+				m_writer.Write(")");
+			}
 		}
 		else if (String_Equal(functionName, "pow"))
 		{
-			HLSLExpression* argument[2];
-			if (GetFunctionArguments(functionCall, argument, 2) != 2)
-			{
-				Error("pow expects 2 argument");
-				return;
-			}
+			ASSERT_PARSER(params.size() == 2);
+
 			m_writer.Write("pow(");
-			OutputExpression(argument[0]);
+			OutputExpression(params[0]);
 			m_writer.Write(",");
 
-			const char* type = getElementTypeAsStrGLSL(argument[0]->expressionType);
+			eastl::string type = getElementTypeAsStrGLSL(m_stringLibrary, params[0]->expressionType);
 			if (!String_Equal(type, "UnknownElementType"))
 			{
-				m_writer.Write("%s", getElementTypeAsStrGLSL(argument[0]->expressionType));
+				m_writer.Write("%s", type.c_str());
 				m_writer.Write("(");
 			}
-			OutputExpression(argument[1]);
+			OutputExpression(params[1]);
 			if (!String_Equal(type, "UnknownElementType"))
 			{
 				m_writer.Write(")");
 			}
 
 			m_writer.Write(")");
-
-			handled = true;
 		}
 		else if (String_Equal(functionName, "WaveGetLaneIndex"))
 		{
 			m_writer.Write("gl_SubgroupInvocationID");
-
-			handled = true;
 		}
 		else if (String_Equal(functionName, "WaveGetLaneCount"))
 		{
 			m_writer.Write("gl_SubgroupSize");
-
-			handled = true;
 		}
 		else if (String_Equal(functionName, "Sample") || String_Equal(functionName, "SampleLevel") || String_Equal(functionName, "SampleCmp") ||
 			String_Equal(functionName, "SampleCmpLevelZero") || String_Equal(functionName, "SampleBias") || String_Equal(functionName, "GatherRed") || String_Equal(functionName, "SampleGrad"))
 		{
-			if(String_Equal(functionName, "Sample"))
+			ASSERT_PARSER(params.size() >= 3);
+
+			bool compareFunc = String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero");
+			if (String_Equal(functionName, "Sample") || compareFunc)
 			{
 				m_writer.Write("texture(");
 			}
 			else if (String_Equal(functionName, "SampleLevel"))
 			{
-				m_writer.Write("textureLod(");
-			}
-			else if (String_Equal(functionName, "SampleCmp"))
-			{
-				m_writer.Write("texture(");
-			}
-			else if (String_Equal(functionName, "SampleCmpLevelZero"))
-			{
-				m_writer.Write("texture(");
+				// If we have 3 arguments, it's textureLod. If we have 4, it's textureLodOffset.
+				
+				if (args.size() == 4)
+				{
+					m_writer.Write("textureLod(");
+				}
+				else if (args.size() == 5)
+				{
+					m_writer.Write("textureLodOffset(");
+				}
+				else
+				{
+					ASSERT_PARSER(0);
+				}
 			}
 			else if (String_Equal(functionName, "SampleBias"))
 			{
@@ -1621,477 +3128,292 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 				m_writer.Write("textureGrad(");
 			}
 
-			int dimension = 0;
+			HLSLBaseType textureType =  params[0]->expressionType.baseType;
 
-		
-			const char* arguementType = NULL;
-
-			switch (functionCall->pTextureStateExpression->expressionType.baseType)
+			switch (textureType)
 			{
 			case HLSLBaseType_Texture1D:
-				m_writer.Write("sampler1D"); dimension = 1;
-				arguementType = "float";
+				m_writer.Write("sampler1D");
 				break;
 			case HLSLBaseType_Texture1DArray:
-				m_writer.Write("sampler1DArray"); dimension = 2;
-				arguementType = "vec2";
+				m_writer.Write("sampler1DArray");
 				break;
 			case HLSLBaseType_Texture2D:
 				if (String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero"))
 				{
-					m_writer.Write("sampler2DShadow"); dimension = 3;
-					arguementType = "vec4";
+					m_writer.Write("sampler2DShadow");
 				}
 				else
 				{
-					m_writer.Write("sampler2D"); dimension = 2;
-					arguementType = "vec2";
+					m_writer.Write("sampler2D");
 				}
-				
 				break;
 			case HLSLBaseType_Texture2DArray:
 				if (String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero"))
 				{
-					m_writer.Write("sampler2DArrayShadow"); dimension = 4;
-					arguementType = "vec4";
+					m_writer.Write("sampler2DArrayShadow");
 				}
 				else
 				{
-					m_writer.Write("sampler2DArray"); dimension = 3;
-					arguementType = "vec3";
-				}				
+					m_writer.Write("sampler2DArray");
+				}
 				break;
 			case HLSLBaseType_Texture3D: 
-				m_writer.Write("sampler3D"); dimension = 3;
-				arguementType = "vec3";
+				m_writer.Write("sampler3D");
 				break;
 			case HLSLBaseType_Texture2DMS:
-				m_writer.Write("sampler2DMS"); dimension = 2;
-				arguementType = "vec2";
+				m_writer.Write("sampler2DMS");
 				break;
 			case HLSLBaseType_Texture2DMSArray:
-				m_writer.Write("sampler2DMSArray"); dimension = 3;
-				arguementType = "vec3";
+				m_writer.Write("sampler2DMSArray");
 				break;
 			case HLSLBaseType_TextureCube:
-				m_writer.Write("samplerCube"); dimension = 3;
-				arguementType = "vec3";
+				m_writer.Write("samplerCube");
 				break;
 			case HLSLBaseType_TextureCubeArray:
 				if (String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero"))
 				{
-					m_writer.Write("samplerCubeArrayShadow"); dimension = 4;
-					arguementType = "vec4";
+					m_writer.Write("samplerCubeArrayShadow");
 				}
 				else
 				{
-					m_writer.Write("samplerCubeArray"); dimension = 4;
-					arguementType = "vec4";
-				}				
+					m_writer.Write("samplerCubeArray");
+				}
 				break;
 			default:
 				break;
 			}
 
-			if (String_Equal(functionName, "SampleLevel"))
-				dimension++;
-
 			m_writer.Write("(");
-			//m_writer.Write("(%s, ", functionCall->functionCaller);
-
-						
-			if (functionCall->pTextureStateExpression)
-			{
-				const HLSLTextureStateExpression* pTextureStateExpression = functionCall->pTextureStateExpression;
-
-				m_writer.Write(" %s", pTextureStateExpression->name);
-
-				if (pTextureStateExpression->bArray)
-				{
-					for (int i = 0; i < (int)pTextureStateExpression->arrayDimension; i++)
-					{
-						if (pTextureStateExpression->arrayExpression)
-						{
-							m_writer.Write("[");
-							OutputExpressionList(pTextureStateExpression->arrayExpression);
-							m_writer.Write("]");
-						}
-						else if (pTextureStateExpression->arrayIndex[i] > 0)
-							m_writer.Write("[%u]", pTextureStateExpression->arrayIndex[i]);
-						else
-							m_writer.Write("[]");
-					}
-				}
-			}
-			
-
-			//m_writer.Write(".%s(", name);
-			//OutputExpressionList(functionCall->argument);
+			OutputExpression(params[0]);
 			m_writer.Write(", ");
+			OutputExpression(params[1]);
+			m_writer.Write("), ");
 
-			HLSLExpression* expression = functionCall->argument;
-			HLSLArgument* argument = functionCall->function->argument;
-
-
-			int numExpressions = 0;
-
-			if (String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero"))
+			size_t start = 2;
+			if (compareFunc && textureType != HLSLBaseType_TextureCubeArray)
 			{
-
+				start = 4;
+				switch (params[0]->expressionType.baseType)
+				{
+				case HLSLBaseType_Texture1D:
+					m_writer.Write("vec3(");
+					break;
+				case HLSLBaseType_Texture1DArray:
+					m_writer.Write("vec3(");
+					break;
+				case HLSLBaseType_Texture2D:
+					m_writer.Write("vec3(");
+					break;
+				case HLSLBaseType_Texture2DArray:
+					m_writer.Write("vec4(");
+					break;
+				case HLSLBaseType_TextureCube:
+					m_writer.Write("vec4(");
+					break;
+				default:
+					ASSERT_PARSER(false);
+				}
+				OutputExpression(params[2]);
+				m_writer.Write(textureType==HLSLBaseType_Texture1D ? "0, " :", ");
+				OutputExpression(params[3]);
+				m_writer.Write(")");
 			}
-			else
-			{
 
-			}
+			OutputExpressionList(params, start);
 
-
-			while (expression != NULL)
-			{
-				if (numExpressions == 1)
-				{
-					m_writer.Write("), ");
-				}
-				else if (numExpressions >= 2)
-				{
-					m_writer.Write(", ");
-				}
-				HLSLType* expectedType = NULL;
-				if (argument != NULL)
-				{
-					expectedType = &argument->type;
-					argument = argument->nextArgument;
-				}
-
-				if (numExpressions == 1)
-					m_writer.Write("%s(", arguementType);
-
-				OutputExpression(expression, expectedType);
-
-				if (String_Equal(functionName, "SampleCmp") || String_Equal(functionName, "SampleCmpLevelZero"))
-				{
-					if (numExpressions == 2)
-						m_writer.Write(")");
-				}
-				else
-				{
-					if (numExpressions == 1)
-						m_writer.Write(")");
-				}
-				
-
-				expression = expression->nextExpression;
-				++numExpressions;
-			}
 			m_writer.Write(")");
-			
-			handled = true;
 		}
 		else if (String_Equal(functionName, "GetDimensions"))
 		{
-			HLSLExpression* expression = functionCall->argument;
-			HLSLArgument* argument = functionCall->function->argument;
-
-			//expression->nodeType == HLSLNodeType_MemberAccess;
-			//HLSLMemberAccess* memExpression = expression;
-
-			HLSLType* expectedType = NULL;
-			if (argument != NULL)
-			{
-				expectedType = &argument->type;
-				argument = argument->nextArgument;
-			}
+			ASSERT_PARSER(params.size()>=2);
+			HLSLType* expectedType = &args[1]->type;
 
 			//if it is from texture
-			if (functionCall->pTextureStateExpression)
+			if (IsTextureType(params[0]->expressionType.baseType))
 			{
-				HLSLExpression* exp = functionCall->argument;
+				m_writer.Write("%s", FetchCstr(m_stringLibrary, m_getDimensions));
+				m_writer.Write("(");
 
-					int argCount = 0;
+				OutputExpression(params[0]);
 
-					while (exp)
-					{
-						if (argCount > 0)
-						{
-							m_writer.Write(";\n");
-							m_writer.Write(1, "");
-						}
-
-						OutputExpression(exp, expectedType);
-
-						m_writer.Write(" = textureSize(");
-
-						const HLSLTextureStateExpression* pTextureStateExpression = functionCall->pTextureStateExpression;
-
-						m_writer.Write("%s", pTextureStateExpression->name);
-
-						if (pTextureStateExpression->bArray)
-						{
-							for (int i = 0; i < (int)pTextureStateExpression->arrayDimension; i++)
-							{
-								if (pTextureStateExpression->arrayExpression)
-								{
-									m_writer.Write("[");
-									OutputExpressionList(pTextureStateExpression->arrayExpression);
-									m_writer.Write("]");
-								}
-								else if (pTextureStateExpression->arrayIndex[i] > 0)
-									m_writer.Write("[%u]", pTextureStateExpression->arrayIndex[i]);
-								else
-									m_writer.Write("[]");
-							}
-						}
-
-						if(argCount == 0)
-							m_writer.Write(").x");
-						else if (argCount == 1)
-							m_writer.Write(").y");
-						else if (argCount == 2)
-							m_writer.Write(").z");
-						else if (argCount == 3)
-							m_writer.Write(").w");
-
-						exp = exp->nextExpression;
-						argCount++;
-					}
-				
+				for (int i = 1; i < params.size(); i++)
+				{
+					m_writer.Write(",");
+					OutputExpression(params[i], expectedType, false);
+				}
+				m_writer.Write(")");
 			}
-			else if (functionCall->pBuffer)
+			else
 			{
-				m_writer.Write("[");
-
-				OutputExpression(functionCall->argument);
-
-				m_writer.Write("]");
+				// TODO: error or unhandled
+				ASSERT_PARSER(0);
 			}
-
-			handled = true;
 		}
 		/// !!! need to check it later
 		else if (String_Equal(functionName, "Load"))
 		{
-			HLSLExpression* expression = functionCall->argument;
-			HLSLArgument* argument = functionCall->function->argument;
+			ASSERT_PARSER(params.size()>=2);
 
-			//expression->nodeType == HLSLNodeType_MemberAccess;
-			//HLSLMemberAccess* memExpression = expression;
+			if (IsTexture(params[0]->expressionType.baseType))
+			{
+				m_writer.Write("texelFetch(");
 
-			HLSLType* expectedType = NULL;
-			if (argument != NULL)
-			{
-				expectedType = &argument->type;
-				argument = argument->nextArgument;
-			}
-			
-			//if it is from texture
-			if (functionCall->pTextureStateExpression)
-			{
-				if (HLSLBaseType_Texture1D <= functionCall->pTextureStateExpression->expressionType.baseType  &&
-					HLSLBaseType_TextureCubeArray >= functionCall->pTextureStateExpression->expressionType.baseType)
+				OutputExpression(params[0]);
+
+				m_writer.Write(", ");
+
+				switch (params[0]->expressionType.baseType)
 				{
-					m_writer.Write("texelFetch(");
+					
+				case HLSLBaseType_Texture1D:
+					
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").x, ");
 
-					const HLSLTextureStateExpression* pTextureStateExpression = functionCall->pTextureStateExpression;
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").y");
+					break;
 
-					m_writer.Write("%s", pTextureStateExpression->name);
+				case HLSLBaseType_Texture1DArray:
+						
+					m_writer.Write("ivec2(");
+					OutputExpression(params[1]);
+					m_writer.Write(").xy, ");
 
-					if (pTextureStateExpression->bArray)
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").z");
+					break;
+
+				case HLSLBaseType_Texture2D:
+						
+					m_writer.Write("ivec2(");
+					OutputExpression(params[1]);
+					m_writer.Write(").xy");	
+
+					//offset
+					if (params.size() > 3)
 					{
-						for (int i = 0; i < (int)pTextureStateExpression->arrayDimension; i++)
-						{
-							if (pTextureStateExpression->arrayExpression)
-							{
-								m_writer.Write("[");
-								OutputExpressionList(pTextureStateExpression->arrayExpression);
-								m_writer.Write("]");
-							}
-							else if (pTextureStateExpression->arrayIndex[i] > 0)
-								m_writer.Write("[%u]", pTextureStateExpression->arrayIndex[i]);
-							else
-								m_writer.Write("[]");
-						}
-					}					
+						m_writer.Write("+");
+						OutputExpression(params[3]);
+					}
 
 					m_writer.Write(", ");
 
-					
-					switch (functionCall->pTextureStateExpression->expressionType.baseType)
+
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").z");
+
+					break;
+
+				case HLSLBaseType_Texture2DMS:
+						
+					m_writer.Write("ivec2(");
+					OutputExpression(functionCall->params[1]);
+					m_writer.Write(").xy");
+
+					//offset
+					if (params.size() > 3)
 					{
-					
-					case HLSLBaseType_Texture1D:
-					
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").x, ");
-
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").y");
-						break;
-
-					case HLSLBaseType_Texture1DArray:
-						
-						m_writer.Write("ivec2(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").xy, ");
-
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").z");
-						break;
-
-					case HLSLBaseType_Texture2D:
-						
-						m_writer.Write("ivec2(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").xy");	
-
-						//offset
-						if (functionCall->argument->nextExpression)
-						{
-							if (functionCall->argument->nextExpression->nextExpression)
-							{
-								m_writer.Write("+");
-								OutputExpression(functionCall->argument->nextExpression->nextExpression);
-							}
-						}
-
-						m_writer.Write(", ");
-
-
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").z");
-
-						break;
-
-					case HLSLBaseType_Texture2DMS:
-						
-						m_writer.Write("ivec2(");
-						OutputExpression(functionCall->argument);
-						m_writer.Write(").xy");
-
-						//offset
-						if (functionCall->argument->nextExpression->nextExpression)
-						{
-							m_writer.Write("+");
-							OutputExpression(functionCall->argument->nextExpression->nextExpression);
-						}
-
-						m_writer.Write(", ");
-
-
-
-						if (functionCall->argument->nextExpression)
-						{
-							m_writer.Write("int(");
-							OutputExpression(functionCall->argument->nextExpression);
-							m_writer.Write(")");
-						}
-						else
-						{						
-							OutputExpression(functionCall->argument);
-							m_writer.Write(".z");
-						}					
-
-						
-						break;
-
-					case HLSLBaseType_Texture2DArray:
-						
-						m_writer.Write("ivec3(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").xyz, ");
-
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").w");
-						break;
-
-					case HLSLBaseType_Texture2DMSArray:
-						
-						m_writer.Write("ivec3(");
-						OutputExpression(functionCall->argument);
-						m_writer.Write(").xyz, ");
-
-						if (functionCall->argument->nextExpression)
-						{
-							m_writer.Write("int(");
-							OutputExpression(functionCall->argument->nextExpression);
-							m_writer.Write(")");
-						}
-						else
-						{
-							OutputExpression(functionCall->argument);
-							m_writer.Write(".w");
-						}
-						break;
-
-					case HLSLBaseType_Texture3D:
-						
-						m_writer.Write("ivec3(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").xyz");
-
-						//offset
-						if (pTextureStateExpression->indexExpression->nextExpression && pTextureStateExpression->indexExpression->nextExpression->nextExpression)
-						{
-							m_writer.Write("+");
-							OutputExpression(pTextureStateExpression->indexExpression->nextExpression->nextExpression);
-						}
-
-						m_writer.Write(", ");
-
-						m_writer.Write("(");
-						OutputExpression(expression, expectedType);
-						m_writer.Write(").w");
-						break;
-					default:
-						break;
+						m_writer.Write("+");
+						OutputExpression(params[3]);
 					}
-					
 
+					m_writer.Write(", ");
 
+					if (params.size() > 2)
+					{
+						m_writer.Write("int(");
+						OutputExpression(params[2]);
+						m_writer.Write(")");
+					}
+					else
+					{						
+						OutputExpression(params[1]);
+						m_writer.Write(".z");
+					}					
 
-					m_writer.Write(")");
+						
+					break;
+
+				case HLSLBaseType_Texture2DArray:
+						
+					m_writer.Write("ivec3(");
+					OutputExpression(params[1]);
+					m_writer.Write(").xyz, ");
+
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").w");
+					break;
+
+				case HLSLBaseType_Texture2DMSArray:
+						
+					m_writer.Write("ivec3(");
+					OutputExpression(params[1]);
+					m_writer.Write(").xyz, ");
+
+					if (params.size() > 2)
+					{
+						m_writer.Write("int(");
+						OutputExpression(params[2]);
+						m_writer.Write(")");
+					}
+					else
+					{
+						OutputExpression(params[1]);
+						m_writer.Write(".w");
+					}
+					break;
+
+				case HLSLBaseType_Texture3D:
+						
+					m_writer.Write("ivec3(");
+					OutputExpression(params[1]);
+					m_writer.Write(").xyz");
+
+					//offset
+					// TODO: what case is this????
+					//if (pTextureStateExpression->indexExpression->nextExpression && pTextureStateExpression->indexExpression->nextExpression->nextExpression)
+					//{
+					//	m_writer.Write("+");
+					//	OutputExpression(pTextureStateExpression->indexExpression->nextExpression->nextExpression);
+					//}
+
+					m_writer.Write(", ");
+
+					m_writer.Write("(");
+					OutputExpression(params[1]);
+					m_writer.Write(").w");
+					break;
+				default:
+					break;
 				}
+
+				m_writer.Write(")");
 			}
-			else if(functionCall->pBuffer)
+			// Buffer
+			else
 			{
+				OutputExpression(params[0]);
 				m_writer.Write("[");
-
-				OutputExpression(functionCall->argument);
-
+				OutputExpression(params[1]);
 				m_writer.Write("]");
 			}
-			
-			handled = true;
 		}
 		else if (String_Equal(functionName, "Store"))
 		{
-			HLSLExpression* expression = functionCall->argument;
-			HLSLArgument* argument = functionCall->function->argument;
 
-			HLSLType* expectedType = NULL;
-			if (argument != NULL)
-			{
-				expectedType = &argument->type;
-				argument = argument->nextArgument;
-			}
-
-			if (functionCall->pBuffer)
-			{
-				m_writer.Write("[");
-
-				OutputExpression(functionCall->argument);
-
-				m_writer.Write("]");
-
-				m_writer.Write(" = ");
-
-				OutputExpression(functionCall->argument->nextExpression);
-			}
-
-			handled = true;
+			OutputExpression(params[0]);
+			m_writer.Write("[");
+			OutputExpression(params[1]);
+			m_writer.Write("]");
+			m_writer.Write(" = ");
+			OutputExpression(params[2]);
 		}
 		else if (String_Equal(functionName, "InterlockedAdd") ||
 			String_Equal(functionName, "InterlockedAnd") ||
@@ -2103,64 +3425,78 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 			String_Equal(functionName, "InterlockedXor"))
 		{
 
-			HLSLExpression* expression = functionCall->argument;
-			HLSLArgument* argument = functionCall->function->argument;
+			const eastl::vector<HLSLExpression*>& params = functionCall->params;
+			const eastl::vector<HLSLArgument*>& argumentVec = functionCall->function->args;
 
 			//check the number of arguements
-
-			HLSLExpression* expressionTemp = expression;
-			int numArguments = 0;
-			while (expressionTemp != NULL)
+			if (argumentVec.size() >= 3)
 			{
-				expressionTemp = expressionTemp->nextExpression;
-				++numArguments;
-			}
+				// any cases with over 3 parameters are not handled. TODO??
+				ASSERT_PARSER(argumentVec.size() == 3);
 
-			if (numArguments >= 3)
-			{
 				HLSLType* expectedType = NULL;
-				if (argument != NULL)
-					expectedType = &argument->nextArgument->nextArgument->type;
 
-				OutputExpression(expression->nextExpression->nextExpression, expectedType);
+				{
+					expectedType = &argumentVec[2]->type;
+				}
+
+				bool isImage = IsTextureType(params[0]->expressionType.baseType);
+
+				OutputExpression(params[2]);
 
 				m_writer.Write(" = ");
 
 				if(String_Equal(functionName, "InterlockedAdd"))
 				{
-					m_writer.Write("atomicAdd(");
+					m_writer.Write("%s(", isImage ? "imageAtomicAdd" : "atomicAdd");
 				}
 				else if (String_Equal(functionName, "InterlockedAnd"))
 				{
-					m_writer.Write("atomicAnd(");
+					m_writer.Write("%s(", isImage ? "imageAtomicAnd" : "atomicAnd");
 				}
 				else if (String_Equal(functionName, "InterlockedCompareExchange"))
 				{
-					m_writer.Write("atomicCompSwap(");
+					m_writer.Write("%s(", isImage ? "imageAtomicCompSwap" : "atomicCompSwap");
 				}
 				else if (String_Equal(functionName, "InterlockedExchange"))
 				{
-					m_writer.Write("atomicExchange(");
+					m_writer.Write("%s(", isImage ? "imageAtomicExchange" : "atomicExchange");
 				}
 				else if (String_Equal(functionName, "InterlockedMax"))
 				{
-					m_writer.Write("atomicMax(");
+					m_writer.Write("%s(", isImage ? "imageAtomicMax" : "atomicMax");
 				}
 				else if (String_Equal(functionName, "InterlockedMin"))
 				{
-					m_writer.Write("atomicMin(");
+					m_writer.Write("%s(", isImage ? "imageAtomicMin" : "atomicMin");
 				}
 				else if (String_Equal(functionName, "InterlockedOr"))
 				{
-					m_writer.Write("atomicOr(");
+					m_writer.Write("%s(", isImage ? "imageAtomicOr" : "atomicOr");
 				}
 				else if (String_Equal(functionName, "InterlockedXor"))
 				{
-					m_writer.Write("atomicXor(");
+					m_writer.Write("%s(", isImage ? "imageAtomicXor" : "atomicXor");
 				}
 
+
+				// if it is a regular expression, just output it.
+				OutputExpression(params[0], expectedType);
+
+				// hardcoded to 3 params, but we are missing some overloads
+				for (int iter = 1; iter < argumentVec.size()-1; iter++)
+				{
+					m_writer.Write(", ");
+
+					OutputExpression(params[iter]);
+				}
+
+				m_writer.Write(")");
+
+#if 0
 				int numExpressions2 = 0;
 
+				int argIter = 0;
 				while (expression != NULL)
 				{
 					
@@ -2173,11 +3509,22 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 					if (numExpressions2 > 0)
 						m_writer.Write(", ");
 
-					HLSLType* expectedType = NULL;
-					if (argument != NULL)
+					if (numExpressions2 == 1 && isImage)
 					{
-						expectedType = &argument->type;
-						argument = argument->nextArgument;
+						// if we are doing the image variation, then write the index after the first param
+	
+						// cast to signed
+						m_writer.Write("%s(", GetBaseTypeName(indexDstType));
+
+						OutputExpression(indexExpression);
+						m_writer.Write("), ");
+					}
+
+					HLSLType* expectedType = NULL;
+					if (argIter < argumentVec.size())
+					{
+						expectedType = &argumentVec[argIter]->type;
+						argIter++;
 					}
 
 					OutputExpression(expression, expectedType);
@@ -2185,753 +3532,422 @@ void GLSLGenerator::OutputExpression(HLSLExpression* expression, const HLSLType*
 
 					numExpressions2++;
 				}
-
-
-				handled = true;
+#endif
 			}
 			
 		}
-
-        if (!handled)
-        {
-            OutputIdentifier(functionName);
-            m_writer.Write("(");
-            OutputExpressionList(functionCall->argument, functionCall->function->argument);
-            m_writer.Write(")");
-        }
-    }
-	else if (expression->nodeType == HLSLNodeType_PreprocessorExpression)
-	{
-		HLSLPreprocessorExpression* preprecessorExpression = static_cast<HLSLPreprocessorExpression*>(expression);
-
-		m_writer.Write("%s", preprecessorExpression->name);
-	}
-	else if (expression->nodeType == HLSLNodeType_SamplerStateExpression)
-	{
-		HLSLSamplerStateExpression* samplerStateExpression = static_cast<HLSLSamplerStateExpression*>(expression);
-
-		m_writer.Write("%s", samplerStateExpression->name);
-	}
-	else if (expression->nodeType == HLSLNodeType_TextureStateExpression)
-	{
-		HLSLTextureStateExpression* textureStateExpression = static_cast<HLSLTextureStateExpression*>(expression);
-
-		if (textureStateExpression->memberAccessExpression)
-		{
-			/*
-			HLSLMemberAccess* ma = static_cast<HLSLMemberAccess*>(textureStateExpression->memberAccessExpression);
-			HLSLFunctionCall* fc = static_cast<HLSLFunctionCall*>(ma->object);
-			fc->pTextureStateExpression = textureStateExpression;
-			*/
-
-			if (textureStateExpression->indexExpression)
-			{
-				if (HLSLBaseType_Texture1D <= textureStateExpression->expressionType.baseType  &&
-					HLSLBaseType_TextureCubeArray >= textureStateExpression->expressionType.baseType)
-				{
-					m_writer.Write("texelFetch(");
-
-					const HLSLTextureStateExpression* pTextureStateExpression = textureStateExpression;
-
-					m_writer.Write("%s", pTextureStateExpression->name);
-
-					if (pTextureStateExpression->bArray)
-					{
-						for (int i = 0; i < (int)pTextureStateExpression->arrayDimension; i++)
-						{
-							if (pTextureStateExpression->arrayExpression)
-							{
-								m_writer.Write("[");
-								OutputExpressionList(pTextureStateExpression->arrayExpression);
-								m_writer.Write("]");
-							}
-							else if (pTextureStateExpression->arrayIndex[i] > 0)
-								m_writer.Write("[%u]", pTextureStateExpression->arrayIndex[i]);
-							else
-								m_writer.Write("[]");
-						}
-					}
-
-					m_writer.Write(", ");
-
-
-					switch (pTextureStateExpression->expressionType.baseType)
-					{
-
-					case HLSLBaseType_Texture1D:
-
-						m_writer.Write("(");
-						OutputExpression(textureStateExpression->indexExpression);
-						
-						//offset
-						if (textureStateExpression->indexExpression->nextExpression && textureStateExpression->indexExpression->nextExpression->nextExpression)
-						{
-							m_writer.Write("+");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression->nextExpression);
-						}
-
-						m_writer.Write(").x, ");
-
-
-						if (textureStateExpression->indexExpression->nextExpression)
-						{
-							m_writer.Write("(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(").y");
-						}
-						else
-							m_writer.Write("0");
-						
-						break;
-
-					case HLSLBaseType_Texture1DArray:
-
-						m_writer.Write("ivec2(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xy, ");
-
-
-						if (textureStateExpression->indexExpression->nextExpression)
-						{
-							m_writer.Write("(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(").z");
-						}
-						else
-							m_writer.Write("0");
-
-						
-						break;
-
-					case HLSLBaseType_Texture2D:
-
-						m_writer.Write("ivec2(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xy");
-
-						//offset
-						if (textureStateExpression->indexExpression->nextExpression && textureStateExpression->indexExpression->nextExpression->nextExpression)
-						{
-							m_writer.Write("+");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression->nextExpression);
-						}
-
-						m_writer.Write(", ");
-
-						if (textureStateExpression->indexExpression->nextExpression)
-						{
-							m_writer.Write("(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(").z");
-						}
-						else
-							m_writer.Write("0");
-						break;
-
-					case HLSLBaseType_Texture2DMS:
-						
-						m_writer.Write("ivec2(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xy");
-
-						//offset
-
-						if (textureStateExpression->indexExpression->nextExpression == NULL)
-						{
-							m_writer.Write("+ ivec2(0, 0), 1)");
-						}
-						else
-						{
-							if (textureStateExpression->indexExpression->nextExpression->nextExpression)
-							{
-								m_writer.Write("+");
-								OutputExpression(textureStateExpression->indexExpression->nextExpression->nextExpression);
-							}
-
-							m_writer.Write(", ");
-
-							m_writer.Write("int(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(")");
-						}
-
-						
-						break;
-
-					case HLSLBaseType_Texture2DArray:
-
-						m_writer.Write("ivec3(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xyz, ");
-
-
-						if (textureStateExpression->indexExpression->nextExpression)
-						{
-							m_writer.Write("(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(").w");
-						}
-						else
-							m_writer.Write("0");
-						
-						break;
-
-					case HLSLBaseType_Texture2DMSArray:
-
-
-						m_writer.Write("ivec3(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xyz, ");
-
-						m_writer.Write("int(");
-						OutputExpression(textureStateExpression->indexExpression->nextExpression);
-						m_writer.Write(")");
-						break;
-
-					case HLSLBaseType_Texture3D:
-
-						m_writer.Write("ivec3(");
-						OutputExpression(textureStateExpression->indexExpression);
-						m_writer.Write(").xyz");
-
-						//offset
-						if (textureStateExpression->indexExpression->nextExpression && textureStateExpression->indexExpression->nextExpression->nextExpression)
-						{
-							m_writer.Write("+");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression->nextExpression);
-						}
-
-						m_writer.Write(", ");
-
-
-						if (textureStateExpression->indexExpression->nextExpression)
-						{
-							m_writer.Write("(");
-							OutputExpression(textureStateExpression->indexExpression->nextExpression);
-							m_writer.Write(").w");
-						}
-						else
-							m_writer.Write("0");
-						
-						break;
-					default:
-						break;
-					}
-
-
-
-
-					m_writer.Write(")");
-				}
-
-				//OutputExpression(textureStateExpression->indexExpression);
-			}
-
-			if(textureStateExpression->functionExpression)
-				OutputExpression(textureStateExpression->functionExpression);
-		}
-		else if (textureStateExpression->functionExpression)
-		{
-
-			OutputExpression(textureStateExpression->functionExpression);
-			
-		}		
 		else
-			m_writer.Write("%s", textureStateExpression->name);
+		{
+			if (String_Equal(functionName, "asfloat"))
+			{
+				int temp = 0;
+				temp++;
+			}
+			
+			OutputIdentifier(functionName);
+			m_writer.Write("(");
+			OutputExpressionList(functionCall->params);
+			m_writer.Write(")");
+		}
 	}
-    else
-    {
-        m_writer.Write("<unknown expression>");
-    }
+	else
+	{
+		m_writer.Write("<unknown expression>");
+	}
 
     if (cast)
     {
-/*
-        const BaseTypeDescription& srcTypeDesc = _baseTypeDescriptions[expression->expressionType.baseType];
-        const BaseTypeDescription& dstTypeDesc = _baseTypeDescriptions[dstType->baseType];
-
-        if (dstTypeDesc.numDimensions == 1 && dstTypeDesc.numComponents > 1)
-        {
-            // Casting to a vector - pad with 0s
-            for (int i = srcTypeDesc.numComponents; i < dstTypeDesc.numComponents; ++i)
-            {
-                m_writer.Write(", 0");
-            }
-        }
-*/
-
         m_writer.Write(")");
     }
-
 }
 
-void GLSLGenerator::OutputIdentifier(const char* name)
+void GLSLGenerator::OutputIdentifier(const CachedString & srcName)
 {
+	CachedString dstName;
 
     // Remap intrinstic functions.
-    if (String_Equal(name, "tex2D"))
+    if (String_Equal(srcName, "tex2D"))
     {
-        name = m_versionLegacy ? "texture2D" : "texture";
+		dstName = MakeCached(m_versionLegacy ? "texture2D" : "texture");
     }
-    else if (String_Equal(name, "tex2Dproj"))
+    else if (String_Equal(srcName, "tex2Dproj"))
     {
-        name = m_versionLegacy ? "texture2DProj" : "textureProj";
+		dstName = MakeCached(m_versionLegacy ? "texture2DProj" : "textureProj");
     }
-    else if (String_Equal(name, "texCUBE"))
+    else if (String_Equal(srcName, "texCUBE"))
     {
-        name = m_versionLegacy ? "textureCube" : "texture";
+		dstName = MakeCached(m_versionLegacy ? "textureCube" : "texture");
     }
-    else if (String_Equal(name, "tex3D"))
+    else if (String_Equal(srcName, "tex3D"))
     {
-        name = m_versionLegacy ? "texture3D" : "texture";
+		dstName = MakeCached(m_versionLegacy ? "texture3D" : "texture");
     }
-    else if (String_Equal(name, "clip"))
+    else if (String_Equal(srcName, "clip"))
     {
-        name = m_clipFunction;
+		dstName = m_clipFunction;
     }
-	else if (String_Equal(name, "f16tof32"))
+	else if (String_Equal(srcName, "f16tof32"))
 	{
-		name = m_f16tof32Function;
+		dstName = m_f16tof32Function;
 	}
-	else if (String_Equal(name, "f32tof16"))
+	else if (String_Equal(srcName, "f32tof16"))
 	{
-		name = m_f32tof16Function;
+		dstName = m_f32tof16Function;
 	}
-    else if (String_Equal(name, "tex2Dlod"))
-    {
-        name = m_tex2DlodFunction;
-    }
-    else if (String_Equal(name, "tex2Dbias"))
-    {
-        name = m_tex2DbiasFunction;
-    }
-    else if (String_Equal(name, "tex2Dgrad"))
-    {
-        name = m_tex2DgradFunction;
-    }
-    else if (String_Equal(name, "tex2DArray"))
-    {
-        name = "texture";
-    }
-    else if (String_Equal(name, "texCUBEbias"))
-    {
-        name = m_texCUBEbiasFunction;
-    }
-	else if( String_Equal( name, "texCUBElod" ) )
+	else if (String_Equal(srcName, "tex2Dlod"))
 	{
-		name = m_texCUBElodFunction;
+		dstName = m_tex2DlodFunction;
 	}
-    else if (String_Equal(name, "atan2"))
+	else if (String_Equal(srcName, "textureLodOffset"))
+	{
+		dstName = m_textureLodOffsetFunction;
+	}
+	else if (String_Equal(srcName, "tex2Dbias"))
     {
-        name = "atan";
+		dstName = m_tex2DbiasFunction;
     }
-    else if (String_Equal(name, "sincos"))
+    else if (String_Equal(srcName, "tex2Dgrad"))
     {
-        name = m_sinCosFunction;
+		dstName = m_tex2DgradFunction;
+    }
+    else if (String_Equal(srcName, "tex2DArray"))
+    {
+		dstName = MakeCached("texture");
+    }
+    else if (String_Equal(srcName, "texCUBEbias"))
+    {
+		dstName = m_texCUBEbiasFunction;
+    }
+	else if( String_Equal(srcName, "texCUBElod" ) )
+	{
+		dstName = m_texCUBElodFunction;
+	}
+    else if (String_Equal(srcName, "atan2"))
+    {
+		dstName = MakeCached("atan");
+    }
+    else if (String_Equal(srcName, "sincos"))
+    {
+		dstName = m_sinCosFunction;
 
     }
-    else if (String_Equal(name, "fmod"))
+    else if (String_Equal(srcName, "fmod"))
     {
         // mod is not the same as fmod if the parameter is negative!
         // The equivalent of fmod(x, y) is x - y * floor(x/y)
         // We use the mod version for performance.
-        name = "mod";
+		dstName = MakeCached("mod");
     }
-    else if (String_Equal(name, "lerp"))
+    else if (String_Equal(srcName, "lerp"))
     {
-        name = "mix";
+		dstName = MakeCached("mix");
     }
-    else if (String_Equal(name, "frac"))
+    else if (String_Equal(srcName, "frac"))
     {
-        name = "fract";
+		dstName = MakeCached("fract");
     }
-    else if (String_Equal(name, "ddx"))
+    else if (String_Equal(srcName, "ddx"))
     {
-        name = "dFdx";
+		dstName = MakeCached("dFdx");
     }
-    else if (String_Equal(name, "ddy"))
+    else if (String_Equal(srcName, "ddy"))
     {
-        name = "dFdy";
+		dstName = MakeCached("dFdy");
     }
 
-	else if (String_Equal(name, "countbits"))
+	else if (String_Equal(srcName, "countbits"))
 	{
-		name = "bitCount";
+		dstName = MakeCached("bitCount");
 	}
 
-	else if (String_Equal(name, "QuadReadAcrossDiagonal"))
+	else if (String_Equal(srcName, "QuadReadAcrossDiagonal"))
 	{
-		name = "subgroupQuadSwapDiagonal";
+		dstName = MakeCached("subgroupQuadSwapDiagonal");
 	}
 
-	else if (String_Equal(name, "QuadReadLaneAt"))
+	else if (String_Equal(srcName, "QuadReadLaneAt"))
 	{
-		name = "subgroupQuadBroadcast";
+		dstName = MakeCached("subgroupQuadBroadcast");
 	}
 
 
-	else if (String_Equal(name, "QuadReadAcrossX"))
+	else if (String_Equal(srcName, "QuadReadAcrossX"))
 	{
-		name = "subgroupQuadSwapHorizontal";
+		dstName = MakeCached("subgroupQuadSwapHorizontal");
 	}
 
-	else if (String_Equal(name, "QuadReadAcrossY"))
+	else if (String_Equal(srcName, "QuadReadAcrossY"))
 	{
-		name = "subgroupQuadSwapVertical";
+		dstName = MakeCached("subgroupQuadSwapVertical");
 	}
 
-	else if (String_Equal(name, "WaveActiveAllEqual"))
+	else if (String_Equal(srcName, "WaveActiveAllEqual"))
 	{
-		name = "subgroupAllEqual";
+		dstName = MakeCached("subgroupAllEqual");
 	}
 
-	else if (String_Equal(name, "WaveActiveBitAnd"))
+	else if (String_Equal(srcName, "WaveActiveBitAnd"))
 	{
-		name = "subgroupAnd";
+		dstName = MakeCached("subgroupAnd");
 	}
 
-	else if (String_Equal(name, "WaveActiveBitOr"))
+	else if (String_Equal(srcName, "WaveActiveBitOr"))
 	{
-		name = "subgroupOr";
+		dstName = MakeCached("subgroupOr");
 	}
 
-	else if (String_Equal(name, "WaveActiveBitXor"))
+	else if (String_Equal(srcName, "WaveActiveBitXor"))
 	{
-		name = "subgroupXor";
+		dstName = MakeCached("subgroupXor");
 	}
 
-	else if (String_Equal(name, "WaveActiveCountBits"))
+	else if (String_Equal(srcName, "WaveActiveCountBits"))
 	{
-		name = "subgroupBallotBitCount";
+		dstName = MakeCached("subgroupBallotBitCount");
 	}
 
-	else if (String_Equal(name, "WaveActiveMax"))
+	else if (String_Equal(srcName, "WaveActiveMax"))
 	{
-		name = "subgroupMax";
+		dstName = MakeCached("subgroupMax");
 	}
-	else if (String_Equal(name, "WaveActiveMin"))
+	else if (String_Equal(srcName, "WaveActiveMin"))
 	{
-		name = "subgroupMin";
+		dstName = MakeCached("subgroupMin");
 	}
-	else if (String_Equal(name, "WaveActiveProduct"))
+	else if (String_Equal(srcName, "WaveActiveProduct"))
 	{
-		name = "subgroupMul";
+		dstName = MakeCached("subgroupMul");
 	}
-	else if (String_Equal(name, "WaveActiveSum"))
+	else if (String_Equal(srcName, "WaveActiveSum"))
 	{
-		name = "subgroupAdd";
+		dstName = MakeCached("subgroupAdd");
 	}
-	else if (String_Equal(name, "WaveActiveAllTrue"))
+	else if (String_Equal(srcName, "WaveActiveAllTrue"))
 	{
-		name = "subgroupAll";
+		dstName = MakeCached("subgroupAll");
 	}
-	else if (String_Equal(name, "WaveActiveAnyTrue"))
+	else if (String_Equal(srcName, "WaveActiveAnyTrue"))
 	{
-		name = "subgroupAny";
+		dstName = MakeCached("subgroupAny");
 	}
-	else if (String_Equal(name, "WaveActiveBallot"))
+	else if (String_Equal(srcName, "WaveActiveBallot"))
 	{
-		name = "subgroupBallot";
-	}
-
-	else if (String_Equal(name, "WaveIsFirstLane"))
-	{
-		name = "subgroupElect";
+		dstName = MakeCached("subgroupBallot");
 	}
 
-	else if (String_Equal(name, "WavePrefixCountBits"))
+	else if (String_Equal(srcName, "WaveIsFirstLane"))
 	{
-		name = "subgroupBallotExclusiveBitCount";
+		dstName = MakeCached("subgroupElect");
+	}
+
+	else if (String_Equal(srcName, "WavePrefixCountBits"))
+	{
+		dstName = MakeCached("subgroupBallotExclusiveBitCount");
 	}
 	
-	else if (String_Equal(name, "WavePrefixProduct"))
+	else if (String_Equal(srcName, "WavePrefixProduct"))
 	{
-		name = "subgroupExclusiveMul";
+		dstName = MakeCached("subgroupExclusiveMul");
 	}
 
-	else if (String_Equal(name, "WavePrefixSum"))
+	else if (String_Equal(srcName, "WavePrefixSum"))
 	{
-		name = "subgroupExclusiveAdd";
+		dstName = MakeCached("subgroupExclusiveAdd");
 	}
 
-	else if (String_Equal(name, "WaveReadLaneFirst"))
+	else if (String_Equal(srcName, "WaveReadLaneFirst"))
 	{
-		name = "subgroupBroadcastFirst";
+		dstName = MakeCached("subgroupBroadcastFirst");
 	}
 
-	else if (String_Equal(name, "WaveReadLaneAt"))
+	else if (String_Equal(srcName, "WaveReadLaneAt"))
 	{
-		name = "subgroupBroadcast";
+		dstName = MakeCached("subgroupBroadcast");
 	}	
 
-	else if (String_Equal(name, "InterlockedAdd"))
+	else if (String_Equal(srcName, "InterlockedAdd"))
 	{
-		name = "atomicAdd";
+		dstName = MakeCached("atomicAdd");
 	}
-	else if (String_Equal(name, "InterlockedAnd"))
+	else if (String_Equal(srcName, "InterlockedAnd"))
 	{
-		name = "atomicAnd";
+		dstName = MakeCached("atomicAnd");
 	}
-	else if (String_Equal(name, "InterlockedOr"))
+	else if (String_Equal(srcName, "InterlockedOr"))
 	{
-		name = "atomicOr";
+		dstName = MakeCached("atomicOr");
 	}
-	else if (String_Equal(name, "InterlockedXor"))
+	else if (String_Equal(srcName, "InterlockedXor"))
 	{
-		name = "atomicXor";
+		dstName = MakeCached("atomicXor");
 	}
-	else if (String_Equal(name, "InterlockedMin"))
+	else if (String_Equal(srcName, "InterlockedMin"))
 	{
-		name = "atomicMin";
+		dstName = MakeCached("atomicMin");
 	}
-	else if (String_Equal(name, "InterlockedMax"))
+	else if (String_Equal(srcName, "InterlockedMax"))
 	{
-		name = "atomicMax";
+		dstName = MakeCached("atomicMax");
 	}
-	else if (String_Equal(name, "InterlockedExchange"))
+	else if (String_Equal(srcName, "InterlockedExchange"))
 	{
-		name = "atomicExchange";
+		dstName = MakeCached("atomicExchange");
 	}
-	else if (String_Equal(name, "InterlockedCompareExchange"))
+	else if (String_Equal(srcName, "InterlockedCompareExchange"))
 	{
-		name = "atomicCompSwap";
+		dstName = MakeCached("atomicCompSwap");
 	}	
-	else if (String_Equal(name, "InterlockedAnd"))
+	else if (String_Equal(srcName, "InterlockedAnd"))
 	{
-		name = "atomicAnd";
+		dstName = MakeCached("atomicAnd");
 	}
-	else if (String_Equal(name, "InterlockedOr"))
+	else if (String_Equal(srcName, "InterlockedOr"))
 	{
-		name = "atomicOr";
+		dstName = MakeCached("atomicOr");
 	}
-	else if (String_Equal(name, "InterlockedXor"))
+	else if (String_Equal(srcName, "InterlockedXor"))
 	{
-		name = "atomicXor";
+		dstName = MakeCached("atomicXor");
 	}
-	else if (String_Equal(name, "InterlockedMin"))
+	else if (String_Equal(srcName, "InterlockedMin"))
 	{
-		name = "atomicMin";
+		dstName = MakeCached("atomicMin");
 	}
-	else if (String_Equal(name, "InterlockedMax"))
+	else if (String_Equal(srcName, "InterlockedMax"))
 	{
-		name = "atomicMax";
+		dstName = MakeCached("atomicMax");
 	}
-	else if (String_Equal(name, "InterlockedExchange"))
+	else if (String_Equal(srcName, "InterlockedExchange"))
 	{
-		name = "atomicExchange";
+		dstName = MakeCached("atomicExchange");
 	}
-	else if (String_Equal(name, "InterlockedCompareExchange"))
+	else if (String_Equal(srcName, "InterlockedCompareExchange"))
 	{
-		name = "atomicCompSwap";
+		dstName = MakeCached("atomicCompSwap");
 	}	
-	else if (String_Equal(name, "GroupMemoryBarrierWithGroupSync"))
+	else if (String_Equal(srcName, "GroupMemoryBarrierWithGroupSync"))
 	{
-		name = "barrier(); groupMemoryBarrier";
+		dstName = MakeCached("barrier(); groupMemoryBarrier");
 	}
-	else if (String_Equal(name, "GroupMemoryBarrier"))
+	else if (String_Equal(srcName, "GroupMemoryBarrier"))
 	{
-		name = "groupMemoryBarrier";
+		dstName = MakeCached("groupMemoryBarrier");
 	}
-	else if (String_Equal(name, "DeviceMemoryBarrierWithGroupSync"))
+	else if (String_Equal(srcName, "DeviceMemoryBarrierWithGroupSync"))
 	{
-		name = "barrier(); memoryBarrierImage(); memoryBarrier";
+		dstName = MakeCached("barrier(); memoryBarrierImage(); memoryBarrier");
 	}
-	else if (String_Equal(name, "DeviceMemoryBarrier"))
+	else if (String_Equal(srcName, "DeviceMemoryBarrier"))
 	{
-		name = "memoryBarrierImage(); memoryBarrier";
+		dstName = MakeCached("memoryBarrierImage(); memoryBarrier");
 	}
-	else if (String_Equal(name, "AllMemoryBarrierWithGroupSync"))
+	else if (String_Equal(srcName, "AllMemoryBarrierWithGroupSync"))
 	{
-		name = "barrier(); groupMemoryBarrier();  memoryBarrierImage(); memoryBarrier";
+		dstName = MakeCached("barrier(); groupMemoryBarrier();  memoryBarrierImage(); memoryBarrier");
 	}
-	else if (String_Equal(name, "AllMemoryBarrier"))
+	else if (String_Equal(srcName, "AllMemoryBarrier"))
 	{
-		name = "barrier(); groupMemoryBarrier();  memoryBarrierImage(); memoryBarrier";
+		dstName = MakeCached("barrier(); groupMemoryBarrier();  memoryBarrierImage(); memoryBarrier");
 	}
-    else 
-    {
-		// if it is one of StructuredBuffer's Name
-		for (int index = 0; index < m_StructuredBufferCounter; index++)
-		{
-			if (String_Equal(m_StructuredBufferNames[index], name))
-			{
-				HLSLBuffer *buffer =  m_tree->FindBuffer(name);
+	else 
+	{
+		dstName = srcName;
 
-				if (buffer->bArray && buffer->arrayDimension > 0)
-					m_writer.Write("%s", name, name);			
-				else
-					m_writer.Write("%s_Data", name);
-				return;
-			}
-		}
-
-		// if it is one of PushConstaantBuffer's data's Name
-		
-			for (int index = 0; index < m_PushConstantBufferCounter; index++)
-			{
-				//HLSLConstantBuffer* buffer = static_cast<HLSLConstantBuffer*>(m_PushConstantBuffers[index]);
-
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(m_PushConstantBuffers[index]);
-				HLSLDeclaration* field = buffer->field;
-
-				while (field != NULL)
-				{
-					if (!field->hidden)
-					{
-						if (String_Equal(field->name, name))
-						{
-							m_writer.Write("%s.%s", buffer->name, name);
-							return;
-						}
-					}
-					field = (HLSLDeclaration*)field->nextStatement;
-				}
-			}
-		
-		
-
-        // The identifier could be a GLSL reserved word (if it's not also a HLSL reserved word).
-        name = GetSafeIdentifierName(name);
-    }
-    m_writer.Write("%s", name);
-
+		// The identifier could be a GLSL reserved word (if it's not also a HLSL reserved word).
+		CachedString baseName = dstName;
+		dstName = GetSafeIdentifierName(baseName);
+	}
+	m_writer.Write("%s", FetchCstr(m_stringLibrary, dstName));
 }
 
-void GLSLGenerator::OutputArguments(HLSLArgument* argument)
+void GLSLGenerator::OutputIdentifierExpression(HLSLIdentifierExpression* pIdentExpr)
 {
-    int numArgs = 0;
+	CachedString baseName = pIdentExpr->pDeclaration->name;
 
-	bool bExist = true;
-
-	//DomainShader
-	if (argument != NULL && m_target == Target_DomainShader)
+	if (IsBuffer(pIdentExpr->expressionType.baseType))
 	{
-		argument = argument->nextArgument;
+		HLSLBuffer *buffer =  static_cast<HLSLBuffer*>(pIdentExpr->pDeclaration);
+
+		if (buffer->type.array && buffer->type.arrayDimension > 0)
+		{
+			// original code for reference, we have an extra name in there, but I think it's harmless. Fixing it anyways.
+			// m_writer.Write("%s", name, name);			
+			m_writer.Write("%s", FetchCstr(m_stringLibrary, baseName));
+		}
+		else
+			m_writer.Write("%s_Data", FetchCstr(m_stringLibrary, baseName));
+		return;
 	}
 
-	bool bcount = true;
+	// if it is one of PushConstaantBuffer's data's Name
+	if (pIdentExpr->pDeclaration->buffer)
+	{
+		HLSLBuffer* buffer = static_cast<HLSLBuffer*>(pIdentExpr->pDeclaration->buffer);
+		if (buffer->bPushConstant)
+			m_writer.Write("%s.%s", FetchCstr(m_stringLibrary, buffer->name), FetchCstr(m_stringLibrary, baseName));
+		else
+			m_writer.Write("%s", FetchCstr(m_stringLibrary, baseName));
+		return;
+	}
 
-	HLSLArgument* prevArg = NULL;
+	// The identifier could be a GLSL reserved word (if it's not also a HLSL reserved word).
+	m_writer.Write("%s", FetchCstr(m_stringLibrary, GetSafeIdentifierName(baseName)));
+}
 
-    while (argument != NULL)
-    {
+void GLSLGenerator::OutputArguments(const eastl::vector<HLSLArgument*>& arguments)
+{
+	int firstArgument = 0;
+
+	//DomainShader
+	if (m_target == Target_DomainShader)
+	{
+		firstArgument = 1; // not sure why we do this, but I guess we skip the first argument in domain shaders?
+	}
+
+	int numWritten = 0;
+
+	for (int i = firstArgument; i < arguments.size(); i++)
+	{
+		HLSLArgument * argument = arguments[i];
+
 		if (argument->type.baseType == HLSLBaseType_InputPatch || argument->type.baseType == HLSLBaseType_OutputPatch)
 		{
-			bExist = false;
-			argument = argument->nextArgument;
 			continue;
 		}
 		else if (m_target == Target_GeometryShader && argument->modifier == HLSLArgumentModifier_Inout)
 		{
-			bExist = false;
-			argument = argument->nextArgument;
 			continue;
 		}
 		else
-		{			
-			bExist = true;
-		}
-
-		if (prevArg == NULL)
 		{
-
+			// ok, keep going
 		}
-		else if (prevArg->preprocessor == NULL && numArgs > 0 && bExist)
+
+		// We tend to skip args in a few places, so we keep trak of how many args are actually written,
+		// as opposed to just checking if (i==0).
+		if (numWritten > 0)
 		{
 			m_writer.Write(", ");
 		}
 
-		if (argument->preprocessor)
+		switch (argument->modifier)
 		{
-
-			HLSLpreprocessor* pre = (HLSLpreprocessor*)argument->preprocessor;
-			m_writer.Write("\n");
-			if (pre->type == HLSLBaseType_PreProcessorIf)
-			{
-				OutputStatements(0, argument->preprocessor);
-				bcount = true;
-			}
-			else if (pre->type == HLSLBaseType_PreProcessorIfDef)
-			{
-				OutputStatements(0, argument->preprocessor);
-				bcount = true;
-			}
-			else if (pre->type == HLSLBaseType_PreProcessorElse)
-			{
-				OutputStatements(0, argument->preprocessor);
-				bcount = false;
-			}
-			else if (pre->type == HLSLBaseType_PreProcessorEndif)
-			{
-				OutputStatements(0, argument->preprocessor);
-				bcount = true;
-			}
-			else
-			{
-				bcount = false;
-			}
-
+		case HLSLArgumentModifier_In:
+			m_writer.Write("in ");
+			break;
+		case HLSLArgumentModifier_Out:
+			m_writer.Write("out ");
+			break;
+		case HLSLArgumentModifier_Inout:
+			m_writer.Write("inout ");
+			break;
+		default:
+			break;
 		}
 
-
-        switch (argument->modifier)
-        {
-        case HLSLArgumentModifier_In:
-            m_writer.Write("in ");
-            break;
-        case HLSLArgumentModifier_Out:
-            m_writer.Write("out ");
-            break;
-        case HLSLArgumentModifier_Inout:
-            m_writer.Write("inout ");
-            break;
-        default:
-            break;
-        }   
-
-		if (argument->preprocessor)
-		{
-
-		}
-		else
-		{
-			if (bExist)
-				OutputDeclaration(argument->type, argument->name);
-
-			if (bcount)
-				++numArgs;
-		}
-
-		prevArg = argument;
-		argument = argument->nextArgument;
-    }
-}
-
-void GLSLGenerator::GetRegisterNumbering(const char* registerName, char* dst)
-{
-	int numberingCounter = 0;
-	for (int i = 0; i < (int)strlen(registerName); i++)
-	{
-		if ('0' <= registerName[i] && registerName[i] <= '9')
-		{
-			dst[numberingCounter++] = registerName[i];
-		}
+		OutputDeclaration(argument->type, argument->name);
+		numWritten++;
 	}
-
-	dst[numberingCounter] = NULL;
-}
-
-int GLSLGenerator::GetLayoutSetNumbering(const char* registerSpaceName)
-{
-	if (registerSpaceName == NULL)
-		return 0;
-
-	//space
-	char temp[128];
-	strcpy(temp, registerSpaceName);
-
-	char* end = temp + (int)strlen(temp);
-	return String_ToInteger(&registerSpaceName[5], &end);
 }
 
 static const char * GetAttributeName(HLSLAttributeType attributeType)
@@ -2969,18 +3985,18 @@ void GLSLGenerator::OutputAttributes(int indent, HLSLAttribute* attribute)
 				if (attribute->numGroupX != 0)
 					m_writer.Write("local_size_x = %d, ", attribute->numGroupX);
 				else
-					m_writer.Write("local_size_x = %s, ", attribute->numGroupXstr);
+					m_writer.Write("local_size_x = %s, ", FetchCstr(m_stringLibrary, attribute->numGroupXstr));
 
 				if (attribute->numGroupY != 0)
 					m_writer.Write("local_size_y = %d, ", attribute->numGroupY);
 				else
-					m_writer.Write("local_size_y = %s, ", attribute->numGroupYstr);
+					m_writer.Write("local_size_y = %s, ", FetchCstr(m_stringLibrary, attribute->numGroupYstr));
 
 
 				if (attribute->numGroupZ != 0)
 					m_writer.Write("local_size_z = %d", attribute->numGroupZ);
 				else
-					m_writer.Write("local_size_z = %s", attribute->numGroupZstr);
+					m_writer.Write("local_size_z = %s", FetchCstr(m_stringLibrary, attribute->numGroupZstr));
 
 				m_writer.Write(") in;");
 
@@ -2989,7 +4005,7 @@ void GLSLGenerator::OutputAttributes(int indent, HLSLAttribute* attribute)
 			else if (String_Equal(attributeName, "maxvertexcount"))
 			{
 				m_writer.EndLine();
-				m_writer.Write("layout(%s, max_vertices = %d) out;", m_outputGeometryType, attribute->maxVertexCount);
+				m_writer.Write("layout(%s, max_vertices = %d) out;", FetchCstr(m_stringLibrary, m_outputGeometryType), attribute->maxVertexCount);
 				m_writer.EndLine();
 			}
 			else if (String_Equal(attributeName, "outputcontrolpoints"))
@@ -3014,11 +4030,16 @@ void GLSLGenerator::OutputAttributes(int indent, HLSLAttribute* attribute)
 			{
 				m_patchconstantfunc = attribute->patchconstantfunc;
 			}
+			else if (String_Equal(attributeName, "unroll"))
+			{
+				m_writer.Write(indent,"[[unroll]] ");
+				m_writer.EndLine();
+			}
 
 			
 
 
-			if (m_target == Target_DomainShader && m_domain != NULL && m_partitioning != NULL && m_outputtopology != NULL)
+			if (m_target == Target_DomainShader && m_domain.IsNotEmpty() && m_partitioning.IsNotEmpty() && m_outputtopology.IsNotEmpty())
 			{
 				m_writer.EndLine();
 				m_writer.Write("layout(");
@@ -3081,291 +4102,92 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
             continue;
         }
 
-	
 		OutputAttributes(indent, statement->attributes);
 
-		if (statement->nodeType == HLSLNodeType_Preprocessor)
-		{
-			HLSLpreprocessor* preprocessor = static_cast<HLSLpreprocessor*>(statement);
-
-			switch (preprocessor->type)
-			{
-			case HLSLBaseType_UserMacro:
-			{
-				m_writer.Write(0, "// USERMACRO: %s ", preprocessor->name);
-				HLSLExpression* hlslExp = preprocessor->userMacroExpression;
-				m_writer.Write(0, "[");
-
-				while (hlslExp)
-				{
-					if (hlslExp != preprocessor->userMacroExpression)
-					{
-						m_writer.Write(0, ",");
-					}
-
-					OutputExpression(hlslExp, false);
-					hlslExp = hlslExp->nextExpression;
-				}
-
-				m_writer.Write(0, "]");
-				m_writer.EndLine();
-			}
-			break;
-				break;
-			case HLSLBaseType_PreProcessorDefine:
-				m_writer.Write(0, "#define %s", preprocessor->name);
-				break;
-			case HLSLBaseType_PreProcessorIf:
-				m_writer.Write(0, "#if %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorElif:
-				m_writer.Write(0, "#elif %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorElse:
-				m_writer.Write(0, "#else");
-				break;
-			case HLSLBaseType_PreProcessorEndif:
-				m_writer.WriteLine(0, "#endif");
-				break;
-			case HLSLBaseType_PreProcessorIfDef:
-				m_writer.Write(0, "#ifdef %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorIfnDef:
-				m_writer.Write(0, "#ifndef %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorUndef:
-				m_writer.Write(0, "#undef %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorInclude:
-				m_writer.WriteLine(0, "#include %s", preprocessor->contents);
-				break;
-			case HLSLBaseType_PreProcessorLine:
-				break;
-			case HLSLBaseType_PreProcessorPragma:
-				break;
-			default:
-
-				if (preprocessor->expression)
-				{
-					m_writer.Write("#define %s ", preprocessor->name);
-					HLSLExpression* expression = preprocessor->expression;
-
-					while (expression)
-					{
-						OutputExpression(expression);
-						expression = expression->nextExpression;
-					}
-				}
-
-				//m_writer.EndLine("");
-				break;
-			}
-
-			m_writer.EndLine("");
-
-		}
-		else if (statement->nodeType == HLSLNodeType_TextureState)
+		if (statement->nodeType == HLSLNodeType_TextureState)
 		{
 			HLSLTextureState* textureState = static_cast<HLSLTextureState*>(statement);
 
-			if (IsTexture(textureState->type.baseType))
+			const char* prefix = "";
+			switch (GetScalarBaseType(textureState->type.elementType))
 			{
-				PrintPreprocessors(textureState->line);
-				m_writer.BeginLine(indent, textureState->fileName, textureState->line);
-
-				char registerNumbering[4];
-				GetRegisterNumbering(textureState->registerName, registerNumbering);
-
-
-				m_writer.Write("layout(set = %d, binding = %s) uniform ", GetLayoutSetNumbering(textureState->registerSpaceName), registerNumbering);
-
-				switch (textureState->type.baseType)
-				{
-				case HLSLBaseType_Texture1D:
-					m_writer.Write("texture1D");
-					break;
-				case HLSLBaseType_Texture1DArray:
-					m_writer.Write("texture1DArray");
-					break;
-				case HLSLBaseType_Texture2D:
-					m_writer.Write("texture2D");
-					break;
-				case HLSLBaseType_Texture2DArray:
-					m_writer.Write("texture2DArray");
-					break;
-				case HLSLBaseType_Texture3D:
-					m_writer.Write("texture3D");
-					break;
-				case HLSLBaseType_Texture2DMS:
-					m_writer.Write("texture2DMS");
-					break;
-				case HLSLBaseType_Texture2DMSArray:
-					m_writer.Write("texture2DMSArray");
-					break;
-				case HLSLBaseType_TextureCube:
-					m_writer.Write("textureCube");
-					break;
-				case HLSLBaseType_TextureCubeArray:
-					m_writer.Write("textureCubeArray");
-					break;
-				default:
-					break;
-				}
-
-				m_writer.Write(" %s", textureState->name);
-
-				if (textureState->bArray)
-				{
-					for (int i = 0; i < (int)textureState->arrayDimension; i++)
-					{
-						if (!String_Equal(textureState->arrayIdentifier[i], ""))
-						{
-							m_writer.Write("[%s]", textureState->arrayIdentifier);
-						}
-						else if (textureState->arrayIndex[i] > 0)
-						{
-							m_writer.Write("[%u]", textureState->arrayIndex[i]);
-						}
-						else
-						{
-							//glsl are not allow unbound texture array
-							m_writer.Write("[256]");
-						}
-					}
-				}
-
-				m_writer.EndLine(";");
+			case HLSLBaseType_Int: prefix = "i";break;
+			case HLSLBaseType_Uint: prefix = "u";break;
 			}
-			else if (IsRWTexture(textureState->type.baseType) || IsRasterizerOrderedTexture(textureState->type.baseType))
+
+			const char* baseTypeName = GetBaseTypeName(textureState->type.baseType);
+			const char* elementType = "";
+			m_writer.BeginLine(indent, RawStr(textureState->fileName), textureState->line);
+
+			if (IsRWTexture(textureState->type.baseType) || IsRasterizerOrderedTexture(textureState->type.baseType))
 			{
-				PrintPreprocessors(textureState->line);
-				m_writer.BeginLine(indent, textureState->fileName, textureState->line);
-
-				char registerNumbering[4];
-				GetRegisterNumbering(textureState->registerName, registerNumbering);
-
-				m_writer.Write("layout(set = %d, binding = %s, ", GetLayoutSetNumbering(textureState->registerSpaceName), registerNumbering);
-
-				bool bUint = false;
-
+				// note: we are promoting 3 float types to 4
 				switch (textureState->type.elementType)
 				{
 				case HLSLBaseType_Float:
-					m_writer.Write("r32f");
+					elementType = ", r32f";
 					break;
 				case HLSLBaseType_Float2:
-					m_writer.Write("rg32f");
+					elementType = ", rg32f";
 					break;
+				case HLSLBaseType_Float3:
 				case HLSLBaseType_Float4:
-					m_writer.Write("rgba32f");
+					elementType = ", rgba32f";
 					break;
 
 				case HLSLBaseType_Half:
-					m_writer.Write("r16f");
+				case HLSLBaseType_Min16Float:
+					elementType = ", r16f";
 					break;
 				case HLSLBaseType_Half2:
-					m_writer.Write("rg16f");
+				case HLSLBaseType_Min16Float2:
+					elementType = ", rg16f";
 					break;
+				case HLSLBaseType_Half3:
+				case HLSLBaseType_Min16Float3:
 				case HLSLBaseType_Half4:
-					m_writer.Write("rgba16f");
+				case HLSLBaseType_Min16Float4:
+					elementType = ", rgba16f";
 					break;
 
 				case HLSLBaseType_Int:
-					m_writer.Write("r32i");
+					elementType = ", r32i";
 					break;
 				case HLSLBaseType_Int2:
-					m_writer.Write("rg32i");
+					elementType = ", rg32i";
 					break;
+				case HLSLBaseType_Int3:
 				case HLSLBaseType_Int4:
-					m_writer.Write("rgba32i");
+					elementType = ", rgba32i";
 					break;
 
 				case HLSLBaseType_Uint:
-					m_writer.Write("r32ui"); bUint = true;
+					elementType = ", r32ui";
 					break;
 				case HLSLBaseType_Uint2:
-					m_writer.Write("rg32ui"); bUint = true;
+					elementType = ", rg32ui";
 					break;
+				case HLSLBaseType_Uint3:
 				case HLSLBaseType_Uint4:
-					m_writer.Write("rgba32ui"); bUint = true;
+					elementType = ", rgba32ui";
 					break;
 				default:
+					Error("Unknown RWTexture type %d", (int)textureState->type.elementType);
 					break;
 				}
-
-				m_writer.Write(") uniform ");
-
-
-				switch (textureState->type.baseType)
-				{
-				case HLSLBaseType_RWTexture1D:
-
-					if (bUint)
-						m_writer.Write("uimage1D");
-					else
-						m_writer.Write("image1D");
-					break;
-				case HLSLBaseType_RWTexture1DArray:
-					if (bUint)
-						m_writer.Write("uimage1DArray");
-					else
-						m_writer.Write("image1DArray");
-					break;
-				case HLSLBaseType_RWTexture2D:
-					if (bUint)
-						m_writer.Write("uimage2D");
-					else
-						m_writer.Write("image2D");
-					break;
-				case HLSLBaseType_RWTexture2DArray:
-					if (bUint)
-						m_writer.Write("uimage2DArray");
-					else
-						m_writer.Write("image2DArray");
-					break;
-				case HLSLBaseType_RWTexture3D:
-					if (bUint)
-						m_writer.Write("uimage3D");
-					else
-						m_writer.Write("image3D");
-					break;
-				default:
-					break;
-				}
-
-				m_writer.Write(" %s", textureState->name);
-
-				if (textureState->bArray)
-				{
-					for (int i = 0; i < (int)textureState->arrayDimension; i++)
-					{
-						if (!String_Equal(textureState->arrayIdentifier[i], ""))
-						{
-							m_writer.Write("[%s]", textureState->arrayIdentifier);
-						}
-						else if (textureState->arrayIndex[i] > 0)
-						{
-							m_writer.Write("[%u]", textureState->arrayIndex[i]);
-						}
-						else
-						{
-							m_writer.Write("[]");
-						}
-					}
-				}
-
-				m_writer.EndLine(";");
 			}
-			
-		}	
-		/*
-		else if (statement->nodeType == HLSLNodeType_RWTextureState)
-		{
-			HLSLRWTextureState* textureState = static_cast<HLSLRWTextureState*>(statement);
 
-			
+			m_writer.Write("layout(set = %d, binding = %d%s) uniform %s%s %s",
+				textureState->registerSpace, textureState->registerIndex, elementType,
+				prefix, baseTypeName, RawStr(textureState->name));
+
+			if (textureState->type.array)
+			{
+				OutputArrayExpression(textureState->type.arrayDimension, textureState->arrayDimExpression);
+			}
+
+			m_writer.EndLine(";");
 		}
-		*/
 		else if (statement->nodeType == HLSLNodeType_GroupShared)
 		{
 			HLSLGroupShared* pGroupShared = static_cast<HLSLGroupShared*>(statement);
@@ -3379,63 +4201,25 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 		{
 			HLSLSamplerState* samplerState = static_cast<HLSLSamplerState*>(statement);
 
-			PrintPreprocessors(samplerState->line);
-			m_writer.BeginLine(indent, samplerState->fileName, samplerState->line);			
+			m_writer.BeginLine(indent, RawStr(samplerState->fileName), samplerState->line);
 
-			if (samplerState->bStructured)
+			m_writer.Write("layout(set = %d, binding = %d) uniform ", samplerState->registerSpace, samplerState->registerIndex);
+
+			if (samplerState->type.baseType == HLSLBaseType_SamplerComparisonState)
 			{
-
-				if (samplerState->IsComparisionState)
-				{
-					m_writer.WriteLineTagged(indent, samplerState->fileName, samplerState->line, "samplerShadow %s {", samplerState->name);
-				}
-				else
-				{
-					m_writer.WriteLineTagged(indent, samplerState->fileName, samplerState->line, "sampler %s {", samplerState->name);
-				}
-
-				HLSLSamplerStateExpression* expression = samplerState->expression;
-
-				while (expression != NULL)
-				{
-					if (!expression->hidden)
-					{
-						PrintPreprocessors(expression->line);
-						m_writer.BeginLine(indent + 1, expression->fileName, expression->line);
-
-						m_writer.Write("%s = %s", expression->lvalue, expression->rvalue);
-						m_writer.Write(";");
-						m_writer.EndLine();
-					}
-					expression = expression->nextExpression;
-				}
-				m_writer.WriteLine(indent, "};");
+				m_writer.Write("samplerShadow %s", RawStr(samplerState->name));
 			}
 			else
 			{
-				char registerNumbering[4];
-				GetRegisterNumbering(samplerState->registerName, registerNumbering);
-
-				m_writer.Write("layout(set = %d, binding = %s) uniform ", GetLayoutSetNumbering(samplerState->registerSpaceName), registerNumbering);
-
-				if (samplerState->IsComparisionState)
-				{
-					m_writer.Write("samplerShadow %s", samplerState->name);
-				}
-				else
-				{
-					m_writer.Write("sampler %s", samplerState->name);
-				}
-
-				if (samplerState->type.array)
-				{
-					m_writer.Write("[");
-					OutputExpression(samplerState->type.arraySize, false);
-					m_writer.Write("]");
-				}
-
-				m_writer.EndLine(";");
+				m_writer.Write("sampler %s", RawStr(samplerState->name));
 			}
+
+			if (samplerState->type.array)
+			{
+				OutputArrayExpression(samplerState->type.arrayDimension, samplerState->arrayDimExpression);
+			}
+
+			m_writer.EndLine(";");
 		}
 		else if (statement->nodeType == HLSLNodeType_Declaration)
         {
@@ -3444,14 +4228,26 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
             // GLSL doesn't seem have texture uniforms, so just ignore them.
             if (declaration->type.baseType != HLSLBaseType_Texture)
             {
-                m_writer.BeginLine(indent, declaration->fileName, declaration->line);
+                m_writer.BeginLine(indent, RawStr(declaration->fileName), declaration->line);
                 if (indent == 0)
                 {
                     // At the top level, we need the "uniform" keyword.
                     //m_writer.Write("uniform ");
-					m_writer.Write("const ");
+
+					if (declaration->type.flags & HLSLTypeFlag_Static)
+					{
+						// ignore?
+						//m_writer.Write("static ");
+					}
+					//m_writer.Write("const ");
                 }
-                OutputDeclaration(declaration);
+
+				if (declaration->type.flags & HLSLTypeFlag_Const)
+				{
+					m_writer.Write("const ");
+				}
+
+				OutputDeclaration(declaration);
                 m_writer.EndLine(";");
             }
         }
@@ -3459,63 +4255,19 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
         {
             HLSLStruct* structure = static_cast<HLSLStruct*>(statement);
 			
-            m_writer.WriteLine(indent, "struct %s", structure->name);
+            m_writer.WriteLine(indent, "struct %s", RawStr(structure->name));
 			m_writer.WriteLine(indent, "{");
             HLSLStructField* field = structure->field;
             while (field != NULL)
             {
-                m_writer.BeginLine(indent + 1, field->fileName, field->line);
+                m_writer.BeginLine(indent + 1, RawStr(field->fileName), field->line);
 
 				if (m_target == Target_HullShader)
 				{
-					if (field->type.array && field->type.arraySize == NULL)
-						field->type.array = false;					
+					if (field->type.array && field->arrayDimExpression[0] == NULL)
+						field->type.array = false;
 				}
 
-				if (field->preProcessor)
-				{
-					if (field->preProcessor->expression)
-						OutputExpression(field->preProcessor->expression);
-					else
-					{
-						switch (field->preProcessor->type)
-						{
-						case HLSLBaseType_PreProcessorIf:
-							m_writer.Write(0, "#if %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorElif:
-							m_writer.Write(0, "#elif %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorElse:
-							m_writer.Write(0, "#else");
-							break;
-						case HLSLBaseType_PreProcessorEndif:
-							m_writer.WriteLine(0, "#endif");
-							break;
-						case HLSLBaseType_PreProcessorIfDef:
-							m_writer.Write(0, "#ifdef %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorIfnDef:
-							m_writer.Write(0, "#ifndef %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorUndef:
-							m_writer.Write(0, "#undef %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorInclude:
-							m_writer.WriteLine(0, "#include %s", field->preProcessor->contents);
-							break;
-						case HLSLBaseType_PreProcessorLine:
-
-							break;
-						case HLSLBaseType_PreProcessorPragma:
-
-							break;
-						default:
-							break;
-						}
-					}
-				}
-				else
 				{
 					OutputDeclaration(field->type, field->name);
 					m_writer.Write(";");
@@ -3528,53 +4280,42 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
         }				
 		else if (statement->nodeType == HLSLNodeType_Buffer)
 		{
-			if (statement->type.baseType == HLSLBaseType_RWBuffer)
+			HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
+			if (buffer->type.baseType == HLSLBaseType_RWBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
 				HLSLDeclaration* field = buffer->field;
 
-				//PrintPreprocessors(buffer->line);
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
-				m_writer.Write("RWBuffer<%s> %s", getElementTypeAsStrGLSL(buffer->type), buffer->name);
-
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
+				eastl::string bufferType = getElementTypeAsStrGLSL(m_stringLibrary, buffer->type);
+				m_writer.Write("RWBuffer<%s> %s", bufferType.c_str(), RawStr(buffer->name));
 
 				m_writer.EndLine(";");
-
 			}
-			else if (statement->type.baseType == HLSLBaseType_RWStructuredBuffer)
+			else if (buffer->type.baseType == HLSLBaseType_RWStructuredBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
 				HLSLDeclaration* field = buffer->field;
 
+				m_StructuredBufferNames.push_back(buffer->name);
 
-				strcpy(m_StructuredBufferNames[m_StructuredBufferCounter++], buffer->name);
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
 
-				PrintPreprocessors(buffer->line);
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
+				m_writer.Write("layout(row_major, set=%d, binding=%d) ", buffer->registerSpace, buffer->registerIndex);
 
-				char registerNumbering[4];
-				GetRegisterNumbering(buffer->registerName, registerNumbering);
-
-				m_writer.Write("layout(set=%d, binding=%s) ", GetLayoutSetNumbering(buffer->registerSpaceName), registerNumbering);
-
-				if (buffer->bArray && buffer->arrayDimension > 0)
-					m_writer.Write("buffer %s_Block", buffer->name);
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
+					m_writer.Write("buffer %s_Block", RawStr(buffer->name));
 				else
-					m_writer.Write("buffer %s", buffer->name);
+					m_writer.Write("buffer %s", RawStr(buffer->name));
 								
 				m_writer.WriteLine(0, "\n{");
-
-
 
 				if (buffer->type.elementType != HLSLBaseType_Unknown)
 				{
 					//avoid for duplicating buffer name and its element name
-					m_writer.WriteLine(indent + 1, "%s %s_Data[];", getElementTypeAsStrGLSL(buffer->type), buffer->name);
+					eastl::string bufferType = getElementTypeAsStrGLSL(m_stringLibrary, buffer->type);
+					m_writer.WriteLine(indent + 1, "%s %s_Data[];", bufferType.c_str(), RawStr(buffer->name));
 				}
 				else
 				{
-					//m_writer.Write("RWStructuredBuffer");
-
 					switch (buffer->type.elementType)
 					{
 					case HLSLBaseType_Float:
@@ -3589,6 +4330,46 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 					case HLSLBaseType_Float4:
 						m_writer.Write(indent + 1, "vec4");
 						break;
+
+					case HLSLBaseType_Half:
+						m_writer.Write(indent + 1, "mediump float");
+						break;
+					case HLSLBaseType_Half2:
+						m_writer.Write(indent + 1, "mediump vec2");
+						break;
+					case HLSLBaseType_Half3:
+						m_writer.Write(indent + 1, "mediump vec3");
+						break;
+					case HLSLBaseType_Half4:
+						m_writer.Write(indent + 1, "mediump vec4");
+						break;
+
+					case HLSLBaseType_Min16Float:
+						m_writer.Write(indent + 1, "mediump float");
+						break;
+					case HLSLBaseType_Min16Float2:
+						m_writer.Write(indent + 1, "mediump vec2");
+						break;
+					case HLSLBaseType_Min16Float3:
+						m_writer.Write(indent + 1, "mediump vec3");
+						break;
+					case HLSLBaseType_Min16Float4:
+						m_writer.Write(indent + 1, "mediump vec4");
+						break;
+
+					case HLSLBaseType_Min10Float:
+						m_writer.Write(indent + 1, "lowp float");
+						break;
+					case HLSLBaseType_Min10Float2:
+						m_writer.Write(indent + 1, "lowp vec2");
+						break;
+					case HLSLBaseType_Min10Float3:
+						m_writer.Write(indent + 1, "lowp vec3");
+						break;
+					case HLSLBaseType_Min10Float4:
+						m_writer.Write(indent + 1, "lowp vec4");
+						break;
+
 					case HLSLBaseType_Bool:
 						m_writer.Write(indent + 1, "bool");
 						break;
@@ -3601,6 +4382,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 					case HLSLBaseType_Bool4:
 						m_writer.Write(indent + 1, "bool4");
 						break;
+
 					case HLSLBaseType_Int:
 						m_writer.Write(indent + 1, "int");
 						break;
@@ -3613,6 +4395,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 					case HLSLBaseType_Int4:
 						m_writer.Write(indent + 1, "ivec4");
 						break;
+
 					case HLSLBaseType_Uint:
 						m_writer.Write(indent + 1, "uint");
 						break;
@@ -3629,23 +4412,15 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 						break;
 					}
 
-					m_writer.Write(" %s_Data[];", buffer->name);
+					m_writer.Write(" %s_Data[];", RawStr(buffer->name));
 					m_writer.EndLine();
 				}
 
-				if (buffer->bArray && buffer->arrayDimension > 0)
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
 				{
-					m_writer.Write("}%s", buffer->name);
+					m_writer.Write("}%s", RawStr(buffer->name));
 
-					for (int i = 0; i < (int)buffer->arrayDimension; i++)
-					{
-						if (!String_Equal(buffer->arrayIdentifier[i], ""))
-							m_writer.Write("[%s]", buffer->arrayIdentifier);
-						else if (buffer->arrayIndex[i] > 0)
-							m_writer.Write("[%u]", buffer->arrayIndex[i]);
-						else
-							m_writer.Write("[]");
-					}
+					OutputArrayExpression(buffer->type.arrayDimension, buffer->arrayDimExpression);
 
 					m_writer.EndLine(";");
 				}
@@ -3654,37 +4429,28 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 					m_writer.WriteLine(0, "};");
 				}
 			}
-			else if (statement->type.baseType == HLSLBaseType_CBuffer || statement->type.baseType == HLSLBaseType_TBuffer)
+			else if (buffer->type.baseType == HLSLBaseType_CBuffer || buffer->type.baseType == HLSLBaseType_TBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
-				//OutputBuffer(indent, buffer);
-
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
-
-				char registerNumbering[4];
-				GetRegisterNumbering(buffer->registerName, registerNumbering);
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
 
 				if (buffer->bPushConstant)
 				{
-					m_PushConstantBuffers[m_PushConstantBufferCounter++] = buffer;
-					m_writer.Write("layout(push_constant) ");
+					m_PushConstantBuffers.push_back(buffer);
+					m_writer.Write("layout(row_major, push_constant) ");
 				}
 				else
-					m_writer.Write("layout(set = %d, binding = %s) ", GetLayoutSetNumbering(buffer->registerSpaceName), registerNumbering);
+					m_writer.Write("layout(row_major, set = %d, binding = %d) ", buffer->registerSpace, buffer->registerIndex);
 
 
 				if (buffer->bPushConstant)
-					m_writer.Write("uniform %s_Block", buffer->name);
+					m_writer.Write("uniform %s_Block", RawStr(buffer->name));
 				else
 				{
-					m_writer.Write("uniform %s", buffer->name);
+					m_writer.Write("uniform %s", RawStr(buffer->name));
 				}
 
 				m_writer.EndLine();
 				m_writer.EndLine("{");
-
-				//m_isInsideBuffer = true;
-
 
 				HLSLDeclaration* field = buffer->field;
 
@@ -3693,7 +4459,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 					if (!field->hidden)
 					{
 
-						m_writer.BeginLine(indent + 1, field->fileName, field->line);
+						m_writer.BeginLine(indent + 1, RawStr(field->fileName), field->line);
 						OutputDeclaration(field->type, field->name);
 						m_writer.Write(";");
 						m_writer.EndLine();
@@ -3702,48 +4468,33 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 				}
 
 				if (buffer->bPushConstant)
-					m_writer.WriteLine(indent, "}%s;", buffer->name);
+					m_writer.WriteLine(indent, "}%s;", RawStr(buffer->name));
 				else
 					m_writer.WriteLine(indent, "};");
-
-
 			}
-			else if (statement->type.baseType ==  HLSLBaseType_ByteAddressBuffer)
+			else if (buffer->type.baseType ==  HLSLBaseType_ByteAddressBuffer || buffer->type.baseType ==  HLSLBaseType_RWByteAddressBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
 				HLSLDeclaration* field = buffer->field;
 
-				strcpy(m_StructuredBufferNames[m_StructuredBufferCounter++], buffer->name);
+				m_StructuredBufferNames.push_back(buffer->name);
 
-				PrintPreprocessors(buffer->line);
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
 
-				char registerNumbering[4];
-				GetRegisterNumbering(buffer->registerName, registerNumbering);
+				m_writer.Write("layout(set = %d, binding = %d) ", buffer->registerSpace, buffer->registerSpace);
 
-				m_writer.Write("layout(set = %d, binding = %s) ", GetLayoutSetNumbering(buffer->registerSpaceName), registerNumbering);
-
-				if (buffer->bArray && buffer->arrayDimension > 0)
-					m_writer.Write("buffer %s_Block", buffer->name);
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
+					m_writer.Write("buffer %s_Block", RawStr(buffer->name));
 				else
-					m_writer.Write("buffer %s", buffer->name);
+					m_writer.Write("buffer %s", RawStr(buffer->name));
 
 				m_writer.WriteLine(0, "\n{");
-				m_writer.WriteLine(1, "%s %s_Data[];", "uint", buffer->name);
+				m_writer.WriteLine(1, "%s %s_Data[];", CHECK_CSTR("uint"), RawStr(buffer->name));
 
-				if (buffer->bArray && buffer->arrayDimension > 0)
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
 				{
-					m_writer.Write("}%s", buffer->name);
+					m_writer.Write("}%s", RawStr(buffer->name));
 
-					for (int i = 0; i < (int)buffer->arrayDimension; i++)
-					{
-						if (!String_Equal(buffer->arrayIdentifier[i], ""))
-							m_writer.Write("[%s]", buffer->arrayIdentifier);
-						else if (buffer->arrayIndex[i] > 0)
-							m_writer.Write("[%u]", buffer->arrayIndex[i]);
-						else
-							m_writer.Write("[]");
-					}
+					OutputArrayExpression(buffer->type.arrayDimension, buffer->arrayDimExpression);
 
 					m_writer.EndLine(";");
 				}
@@ -3753,56 +4504,44 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 				}
 
 			}
-			else if (statement->type.baseType == HLSLBaseType_ConstantBuffer)
+			else if (buffer->type.baseType == HLSLBaseType_ConstantBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
-				
-
-
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
-
-				char registerNumbering[4];
-				GetRegisterNumbering(buffer->registerName, registerNumbering);
-
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
 
 				if (buffer->bPushConstant)
 				{
-					m_PushConstantBuffers[m_PushConstantBufferCounter++] = buffer;
-					m_writer.Write("layout(push_constant) ");
+					m_PushConstantBuffers.push_back(buffer);
+					m_writer.Write("layout(row_major, push_constant) ");
 				}
 				else
-					m_writer.Write("layout(set= % d, binding = %s) ", GetLayoutSetNumbering(buffer->registerSpaceName), registerNumbering);
+					m_writer.Write("layout(row_major, set= %d, binding = %d) ", buffer->registerSpace, buffer->registerIndex);
 
 
 				if (buffer->bPushConstant)
-					m_writer.Write("uniform %s_Block", buffer->name);
+					m_writer.Write("uniform %s_Block", RawStr(buffer->name));
 				else
 				{
 					if (buffer->type.elementType != HLSLBaseType_Unknown)
-						m_writer.Write("uniform %s_Block", buffer->name);
+						m_writer.Write("uniform %s_Block", RawStr(buffer->name));
 					else
-						m_writer.Write("uniform %s", buffer->name);
+						m_writer.Write("uniform %s", RawStr(buffer->name));
 				}
 
 				m_writer.EndLine();
 				m_writer.EndLine("{");
 
-				//if (buffer->type.elementType != HLSLBaseType_Unknown)
-				//{
-				//	m_writer.WriteLine(indent + 1, "%s %s_Data;", getElementTypeAsStrGLSL(buffer->type), buffer->name);
-				//}
-				//else
+
 				{
-					HLSLStruct* pStruct = m_tree->FindGlobalStruct(getElementTypeAsStrGLSL(buffer->type));
+					eastl::string glslTypeName = getElementTypeAsStrGLSL(m_stringLibrary, buffer->type);
+					HLSLStruct* pStruct = m_tree->FindGlobalStruct(MakeCached(glslTypeName.c_str()));
 					HLSLStructField* field = pStruct->field;
-					//HLSLDeclaration* field = pStruct->field;//->field;
 
 					while (field != NULL)
 					{
 						if (!field->hidden)
 						{
 
-							m_writer.BeginLine(indent + 1, field->fileName, field->line);
+							m_writer.BeginLine(indent + 1, RawStr(field->fileName), field->line);
 							OutputDeclaration(field->type, field->name);
 							m_writer.Write(";");
 							m_writer.EndLine();
@@ -3812,52 +4551,40 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 				}
 
 				if (buffer->bPushConstant)
-					m_writer.WriteLine(indent, "}%s;", buffer->name);
+					m_writer.WriteLine(indent, "}%s;", RawStr(buffer->name));
 				else
 				{
 					if (buffer->type.elementType != HLSLBaseType_Unknown)
-						m_writer.WriteLine(indent, "}%s;", buffer->name);
+						m_writer.WriteLine(indent, "}%s;", RawStr(buffer->name));
 					else
 						m_writer.WriteLine(indent, "};");
 				}
 				
 			}
-			else if (statement->type.baseType == HLSLBaseType_StructuredBuffer || statement->type.baseType == HLSLBaseType_PureBuffer)
+			else if (buffer->type.baseType == HLSLBaseType_StructuredBuffer || buffer->type.baseType == HLSLBaseType_PureBuffer)
 			{
-				HLSLBuffer* buffer = static_cast<HLSLBuffer*>(statement);
 				HLSLDeclaration* field = buffer->field;
 
-				strcpy(m_StructuredBufferNames[m_StructuredBufferCounter++], buffer->name);
+				m_StructuredBufferNames.push_back(buffer->name);
 
-				PrintPreprocessors(buffer->line);
-				m_writer.BeginLine(indent, buffer->fileName, buffer->line);
+				m_writer.BeginLine(indent, RawStr(buffer->fileName), buffer->line);
 
-				char registerNumbering[4];
-				GetRegisterNumbering(buffer->registerName, registerNumbering);
+				m_writer.Write("layout(row_major, set = %d, binding = %d) ", buffer->registerSpace, buffer->registerIndex);
 
-				m_writer.Write("layout(set = %d, binding = %s) ", GetLayoutSetNumbering(buffer->registerSpaceName), registerNumbering);
-
-				if (buffer->bArray && buffer->arrayDimension > 0)
-					m_writer.Write("buffer %s_Block", buffer->name);
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
+					m_writer.Write("buffer %s_Block", RawStr(buffer->name));
 				else
-					m_writer.Write("buffer %s", buffer->name);
+					m_writer.Write("buffer %s", RawStr(buffer->name));
 
 				m_writer.WriteLine(0, "\n{");
-				m_writer.WriteLine(1, "%s %s_Data[];", getElementTypeAsStrGLSL(buffer->type), buffer->name);
+				eastl::string bufferType = getElementTypeAsStrGLSL(m_stringLibrary, buffer->type);
+				m_writer.WriteLine(1, "%s %s_Data[];", CHECK_CSTR(bufferType.c_str()), RawStr(buffer->name));
 
-				if (buffer->bArray && buffer->arrayDimension > 0)
+				if (buffer->type.array && buffer->type.arrayDimension > 0)
 				{
-					m_writer.Write("}%s", buffer->name);
+					m_writer.Write("}%s", RawStr(buffer->name));
 
-					for (int i = 0; i < (int)buffer->arrayDimension; i++)
-					{
-						if (!String_Equal(buffer->arrayIdentifier[i], ""))
-							m_writer.Write("[%s]", buffer->arrayIdentifier);
-						else if (buffer->arrayIndex[i] > 0)
-							m_writer.Write("[%u]", buffer->arrayIndex[i]);
-						else
-							m_writer.Write("[]");
-					}
+					OutputArrayExpression(buffer->type.arrayDimension, buffer->arrayDimExpression);
 
 					m_writer.EndLine(";");
 				}
@@ -3868,24 +4595,24 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 			}
 
 			m_writer.EndLine("");
-		}		
+		}
         else if (statement->nodeType == HLSLNodeType_Function)
         {
             HLSLFunction* function = static_cast<HLSLFunction*>(statement);
 
             // Use an alternate name for the function which is supposed to be entry point
             // so that we can supply our own function which will be the actual entry point.
-            const char* functionName   = GetSafeIdentifierName(function->name);
+            CachedString functionName   = GetSafeIdentifierName(function->name);
             const char* returnTypeName = GetTypeName(function->returnType);
 
-            m_writer.BeginLine(indent, function->fileName, function->line);
+            m_writer.BeginLine(indent, RawStr(function->fileName), function->line);
 
 			if (String_Equal(functionName, "main"))
-				m_writer.Write("%s HLSL%s(", returnTypeName, functionName);	
+				m_writer.Write("%s HLSL%s(", returnTypeName, RawStr(functionName));
 			else
-				m_writer.Write("%s %s(", returnTypeName, functionName);
-								
-			OutputArguments(function->argument);
+				m_writer.Write("%s %s(", returnTypeName, RawStr(functionName));
+
+			OutputArguments(function->args);
 
             if (function->forward)
             {
@@ -3908,7 +4635,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
         else if (statement->nodeType == HLSLNodeType_ExpressionStatement)
         {
             HLSLExpressionStatement* expressionStatement = static_cast<HLSLExpressionStatement*>(statement);
-            m_writer.BeginLine(indent, statement->fileName, statement->line);
+            m_writer.BeginLine(indent, RawStr(statement->fileName), statement->line);
             OutputExpression(expressionStatement->expression);
             m_writer.EndLine(";");
         }
@@ -3917,14 +4644,14 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
             HLSLReturnStatement* returnStatement = static_cast<HLSLReturnStatement*>(statement);
             if (returnStatement->expression != NULL)
             {
-                m_writer.BeginLine(indent, returnStatement->fileName, returnStatement->line);
+                m_writer.BeginLine(indent, RawStr(returnStatement->fileName), returnStatement->line);
                 m_writer.Write("return ");
                 OutputExpression(returnStatement->expression, returnType);
                 m_writer.EndLine(";");
             }
             else
             {
-                m_writer.WriteLineTagged(indent, returnStatement->fileName, returnStatement->line, "return;");
+                m_writer.WriteLineTagged(indent, RawStr(returnStatement->fileName), returnStatement->line, "return;");
             }
         }
         else if (statement->nodeType == HLSLNodeType_DiscardStatement)
@@ -3932,34 +4659,28 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
             HLSLDiscardStatement* discardStatement = static_cast<HLSLDiscardStatement*>(statement);
             if (m_target == Target_FragmentShader)
             {
-                m_writer.WriteLineTagged(indent, discardStatement->fileName, discardStatement->line, "discard;");
+                m_writer.WriteLineTagged(indent, RawStr(discardStatement->fileName), discardStatement->line, "discard;");
             }
         }
         else if (statement->nodeType == HLSLNodeType_BreakStatement)
         {
             HLSLBreakStatement* breakStatement = static_cast<HLSLBreakStatement*>(statement);
-            m_writer.WriteLineTagged(indent, breakStatement->fileName, breakStatement->line, "break;");
+            m_writer.WriteLineTagged(indent, RawStr(breakStatement->fileName), breakStatement->line, "break;");
         }
         else if (statement->nodeType == HLSLNodeType_ContinueStatement)
         {
             HLSLContinueStatement* continueStatement = static_cast<HLSLContinueStatement*>(statement);
-            m_writer.WriteLineTagged(indent, continueStatement->fileName, continueStatement->line, "continue;");
+            m_writer.WriteLineTagged(indent, RawStr(continueStatement->fileName), continueStatement->line, "continue;");
         }
         else if (statement->nodeType == HLSLNodeType_IfStatement)
         {
             HLSLIfStatement* ifStatement = static_cast<HLSLIfStatement*>(statement);
-            //m_writer.BeginLine(indent, ifStatement->fileName, ifStatement->line);
             m_writer.Write(indent, "if(");
             OutputExpression(ifStatement->condition, &kBoolType);
 			m_writer.EndLine(")");
 
 			if (ifStatement->statement != NULL)
 			{
-				if (ifStatement->statement->nodeType == HLSLNodeType_Preprocessor)
-				{
-					OutputStatements(indent + 1, ifStatement->statement, returnType);
-				}
-				else
 				{
 					m_writer.WriteLine(indent, "{");
 					OutputStatements(indent + 1, ifStatement->statement, returnType);
@@ -3971,10 +4692,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 				m_writer.WriteLine(indent, "{}");
 			}
 
-			
-
-
-			for (int i = 0; i< ifStatement->elseifStatementCounter; i++)
+			for (int i = 0; i< ifStatement->elseifStatement.size(); i++)
 			{
 				m_writer.Write(indent, "else if (");
 				OutputExpression(ifStatement->elseifStatement[i]->condition);
@@ -4006,10 +4724,12 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 			m_writer.WriteLine(indent, "{");
 
 			//print cases
-			for (int i = 0; i< switchStatement->caseCounter; i++)
+			int numCases = (int)switchStatement->caseNumber.size();
+			ASSERT_PARSER(numCases == switchStatement->caseStatement.size());
+
+			for (int i = 0; i< numCases; i++)
 			{
 				m_writer.Write(indent + 1, "case ");
-
 
 				OutputExpression(switchStatement->caseNumber[i], false);
 
@@ -4021,7 +4741,6 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 			}
 
 			//print default
-
 			m_writer.Write(indent + 1, "default:\n");
 			m_writer.WriteLine(indent + 1, "{");
 			OutputStatements(indent + 2, switchStatement->caseDefault);
@@ -4032,7 +4751,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
         else if (statement->nodeType == HLSLNodeType_ForStatement)
         {
             HLSLForStatement* forStatement = static_cast<HLSLForStatement*>(statement);
-            m_writer.BeginLine(indent, forStatement->fileName, forStatement->line);
+            m_writer.BeginLine(indent, RawStr(forStatement->fileName), forStatement->line);
             m_writer.Write("for (");
 
 			if (forStatement->initialization)
@@ -4056,7 +4775,7 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 		{
 			HLSLWhileStatement* whileStatement = static_cast<HLSLWhileStatement*>(statement);
 
-			m_writer.BeginLine(indent, whileStatement->fileName, whileStatement->line);
+			m_writer.BeginLine(indent, RawStr(whileStatement->fileName), whileStatement->line);
 			m_writer.Write("while (");
 
 			OutputExpression(whileStatement->condition);
@@ -4068,21 +4787,18 @@ void GLSLGenerator::OutputStatements(int indent, HLSLStatement* statement, const
 		else if (statement->nodeType == HLSLNodeType_BlockStatement)
 		{
 			HLSLBlockStatement* blockStatement = static_cast<HLSLBlockStatement*>(statement);
-			PrintPreprocessors(blockStatement->line);
-			m_writer.WriteLineTagged(indent, blockStatement->fileName, blockStatement->line, "{");
+			m_writer.WriteLineTagged(indent, RawStr(blockStatement->fileName), blockStatement->line, "{");
 			OutputStatements(indent + 1, blockStatement->statement);
 			m_writer.WriteLine(indent, "}");
 		}
         else
         {
             // Unhanded statement type.
-            ASSERT(0);
+			ASSERT_PARSER(0);
         }
 
         statement = statement->nextStatement;
-
     }
-
 }
 
 void GLSLGenerator::OutputBuffer(int indent, HLSLBuffer* buffer)
@@ -4098,16 +4814,16 @@ void GLSLGenerator::OutputBuffer(int indent, HLSLBuffer* buffer)
 
         unsigned int uniformSize = (size + 3) / 4;
 
-        m_writer.WriteLineTagged(indent, buffer->fileName, buffer->line, "uniform vec4 %s%s[%d];", m_options.constantBufferPrefix, buffer->name, uniformSize);
+        m_writer.WriteLineTagged(indent, RawStr(buffer->fileName), buffer->line, "uniform vec4 %s%s[%d];", m_options.constantBufferPrefix, RawStr(buffer->name), uniformSize);
     }
     else
     {
-        m_writer.WriteLineTagged(indent, buffer->fileName, buffer->line, "layout (std140) uniform %s%s", m_options.constantBufferPrefix, buffer->name);
+        m_writer.WriteLineTagged(indent, RawStr(buffer->fileName), buffer->line, "layout (std140) uniform %s%s", m_options.constantBufferPrefix, RawStr(buffer->name));
 		m_writer.Write(indent, "{");
         HLSLDeclaration* field = buffer->field;
         while (field != NULL)
         {
-            m_writer.BeginLine(indent + 1, field->fileName, field->line);
+            m_writer.BeginLine(indent + 1, RawStr(field->fileName), field->line);
             OutputDeclaration(field->type, field->name);
             m_writer.Write(";");
             m_writer.EndLine();
@@ -4119,7 +4835,7 @@ void GLSLGenerator::OutputBuffer(int indent, HLSLBuffer* buffer)
 
 inline void alignForWrite(unsigned int& offset, unsigned int size)
 {
-    ASSERT(size <= 4);
+	ASSERT_PARSER(size <= 4);
 
     if (offset / 4 != (offset + size - 1) / 4)
         offset = (offset + 3) & ~3;
@@ -4139,8 +4855,7 @@ void GLSLGenerator::LayoutBuffer(const HLSLType& type, unsigned int& offset)
 
     if (type.array)
     {
-        int arraySize = 0;
-        m_tree->GetExpressionValue(type.arraySize, arraySize);
+        int arraySize = type.arrayExtent[0];
 
         unsigned int elementSize = 0;
         LayoutBufferElement(type, elementSize);
@@ -4190,12 +4905,12 @@ void GLSLGenerator::LayoutBufferElement(const HLSLType& type, unsigned int& offs
         }
         else
         {
-            Error("Unknown type %s", type.typeName);
+            Error("Unknown type %s", FetchCstr(m_stringLibrary, type.typeName));
         }
     }
     else
     {
-        Error("Constant buffer layout is not supported for %s", GetTypeName(type));
+        Error("Constant buffer layout is not supported for %s", CHECK_CSTR(GetTypeName(type)));
     }
 }
 
@@ -4231,23 +4946,21 @@ void GLSLGenerator::LayoutBufferAlign(const HLSLType& type, unsigned int& offset
     }
     else
     {
-        Error("Constant buffer layout is not supported for %s", GetTypeName(type));
+        Error("Constant buffer layout is not supported for %s", CHECK_CSTR(GetTypeName(type)));
     }
 }
 
 HLSLBuffer* GLSLGenerator::GetBufferAccessExpression(HLSLExpression* expression)
 {
-    if (expression->nodeType == HLSLNodeType_IdentifierExpression)
-    {
-        HLSLIdentifierExpression* identifierExpression = static_cast<HLSLIdentifierExpression*>(expression);
+	if (expression->nodeType == HLSLNodeType_IdentifierExpression)
+	{
+		HLSLIdentifierExpression* identifierExpression = static_cast<HLSLIdentifierExpression*>(expression);
+		HLSLDeclaration * declaration = identifierExpression->pDeclaration;
+		ASSERT_PARSER(declaration);
 
-        if (identifierExpression->global)
-        {
-            HLSLDeclaration * declaration = m_tree->FindGlobalDeclaration(identifierExpression->name);
-            if (declaration && declaration->buffer)
-                return declaration->buffer;
-        }
-    }
+		if (declaration->global && declaration->buffer)
+			return declaration->buffer;
+	}
     else if (expression->nodeType == HLSLNodeType_MemberAccess)
     {
         HLSLMemberAccess* memberAccess = static_cast<HLSLMemberAccess*>(expression);
@@ -4272,39 +4985,46 @@ void GLSLGenerator::OutputBufferAccessExpression(HLSLBuffer* buffer, HLSLExpress
     {
         Error("Constant buffer access is not supported for arrays (use indexing instead)");
     }
-    else if (type.baseType == HLSLBaseType_Float)
+    else if (type.baseType == HLSLBaseType_Float || type.baseType == HLSLBaseType_Half || type.baseType == HLSLBaseType_Min16Float || type.baseType == HLSLBaseType_Min10Float)
     {
-        m_writer.Write("%s%s[", m_options.constantBufferPrefix, buffer->name);
+        m_writer.Write("%s%s[", CHECK_CSTR(m_options.constantBufferPrefix), FetchCstr(m_stringLibrary, buffer->name));
         unsigned int index = OutputBufferAccessIndex(expression, postOffset);
         m_writer.Write("%d].%c", index / 4, "xyzw"[index % 4]);
     }
-    else if (type.baseType == HLSLBaseType_Float2)
+    else if (type.baseType == HLSLBaseType_Float2 || type.baseType == HLSLBaseType_Half2 || type.baseType == HLSLBaseType_Min16Float2 || type.baseType == HLSLBaseType_Min10Float2)
     {
-        m_writer.Write("%s%s[", m_options.constantBufferPrefix, buffer->name);
+        m_writer.Write("%s%s[", CHECK_CSTR(m_options.constantBufferPrefix), FetchCstr(m_stringLibrary, buffer->name));
         unsigned int index = OutputBufferAccessIndex(expression, postOffset);
-        m_writer.Write("%d].%s", index / 4, index % 4 == 0 ? "xy" : index % 4 == 1 ? "yz" : "zw");
+        m_writer.Write("%d].%s", index / 4, index % 4 == 0 ? CHECK_CSTR("xy") : index % 4 == 1 ? CHECK_CSTR("yz") : CHECK_CSTR("zw"));
     }
-    else if (type.baseType == HLSLBaseType_Float3)
+    else if (type.baseType == HLSLBaseType_Float3 || type.baseType == HLSLBaseType_Half3 || type.baseType == HLSLBaseType_Min16Float3 || type.baseType == HLSLBaseType_Min10Float3)
     {
-        m_writer.Write("%s%s[", m_options.constantBufferPrefix, buffer->name);
+        m_writer.Write("%s%s[", CHECK_CSTR(m_options.constantBufferPrefix), FetchCstr(m_stringLibrary, buffer->name));
         unsigned int index = OutputBufferAccessIndex(expression, postOffset);
-        m_writer.Write("%d].%s", index / 4, index % 4 == 0 ? "xyz" : "yzw");
+        m_writer.Write("%d].%s", index / 4, index % 4 == 0 ? CHECK_CSTR("xyz") : CHECK_CSTR("yzw"));
     }
-    else if (type.baseType == HLSLBaseType_Float4)
+    else if (type.baseType == HLSLBaseType_Float4 || type.baseType == HLSLBaseType_Half4 || type.baseType == HLSLBaseType_Min16Float4 || type.baseType == HLSLBaseType_Min10Float4)
     {
-        m_writer.Write("%s%s[", m_options.constantBufferPrefix, buffer->name);
+        m_writer.Write("%s%s[", CHECK_CSTR(m_options.constantBufferPrefix), FetchCstr(m_stringLibrary, buffer->name));
         unsigned int index = OutputBufferAccessIndex(expression, postOffset);
-        ASSERT(index % 4 == 0);
+		ASSERT_PARSER(index % 4 == 0);
         m_writer.Write("%d]", index / 4);
     }
-    else if (type.baseType == HLSLBaseType_Float4x4)
+    else if (type.baseType == HLSLBaseType_Float4x4 || type.baseType == HLSLBaseType_Half4x4 || type.baseType == HLSLBaseType_Min16Float4x4 || type.baseType == HLSLBaseType_Min10Float4x4)
     {
-        m_writer.Write("mat4(");
+		if(type.baseType == HLSLBaseType_Float4x4)
+			m_writer.Write("mat4(");
+		if (type.baseType == HLSLBaseType_Half4x4)
+			m_writer.Write("mediump mat4(");
+		if (type.baseType == HLSLBaseType_Min16Float4x4)
+			m_writer.Write("mediump mat4(");
+		if (type.baseType == HLSLBaseType_Min10Float4x4)
+			m_writer.Write("lowp mat4(");
         for (int i = 0; i < 4; ++i)
         {
-            m_writer.Write("%s%s[", m_options.constantBufferPrefix, buffer->name);
+            m_writer.Write("%s%s[", CHECK_CSTR(m_options.constantBufferPrefix), FetchCstr(m_stringLibrary, buffer->name));
             unsigned int index = OutputBufferAccessIndex(expression, postOffset + i * 4);
-            ASSERT(index % 4 == 0);
+			ASSERT_PARSER(index % 4 == 0);
             m_writer.Write("%d]%c", index / 4, i == 3 ? ')' : ',');
         }
     }
@@ -4314,7 +5034,7 @@ void GLSLGenerator::OutputBufferAccessExpression(HLSLBuffer* buffer, HLSLExpress
 
         if (st)
         {
-            m_writer.Write("%s(", st->name);
+            m_writer.Write("%s(", FetchCstr(m_stringLibrary, st->name));
 
             unsigned int offset = postOffset;
 
@@ -4332,12 +5052,12 @@ void GLSLGenerator::OutputBufferAccessExpression(HLSLBuffer* buffer, HLSLExpress
         }
         else
         {
-            Error("Unknown type %s", type.typeName);
+            Error("Unknown type %s", FetchCstr(m_stringLibrary, type.typeName));
         }
     }
     else
     {
-        Error("Constant buffer layout is not supported for %s", GetTypeName(type));
+        Error("Constant buffer layout is not supported for %s", CHECK_CSTR(GetTypeName(type)));
     }
 }
 
@@ -4346,13 +5066,11 @@ unsigned int GLSLGenerator::OutputBufferAccessIndex(HLSLExpression* expression, 
     if (expression->nodeType == HLSLNodeType_IdentifierExpression)
     {
         HLSLIdentifierExpression* identifierExpression = static_cast<HLSLIdentifierExpression*>(expression);
-        ASSERT(identifierExpression->global);
-
-        HLSLDeclaration * declaration = m_tree->FindGlobalDeclaration(identifierExpression->name);
-        ASSERT(declaration);
+        HLSLDeclaration * declaration = identifierExpression->pDeclaration;
+		ASSERT_PARSER(declaration && declaration->global);
 
         HLSLBuffer * buffer = declaration->buffer;
-        ASSERT(buffer);
+		ASSERT_PARSER(buffer);
 
         unsigned int offset = 0;
 
@@ -4374,7 +5092,7 @@ unsigned int GLSLGenerator::OutputBufferAccessIndex(HLSLExpression* expression, 
         HLSLMemberAccess* memberAccess = static_cast<HLSLMemberAccess*>(expression);
 
         const HLSLType& type = memberAccess->object->expressionType;
-        ASSERT(type.baseType == HLSLBaseType_UserDefined);
+		ASSERT_PARSER(type.baseType == HLSLBaseType_UserDefined);
 
         HLSLStruct * st = m_tree->FindGlobalStruct(type.typeName);
 
@@ -4397,7 +5115,7 @@ unsigned int GLSLGenerator::OutputBufferAccessIndex(HLSLExpression* expression, 
         }
         else
         {
-            Error("Unknown type %s", type.typeName);
+            Error("Unknown type %s", FetchCstr(m_stringLibrary, type.typeName));
         }
     }
     else if (expression->nodeType == HLSLNodeType_ArrayAccess)
@@ -4405,7 +5123,7 @@ unsigned int GLSLGenerator::OutputBufferAccessIndex(HLSLExpression* expression, 
         HLSLArrayAccess* arrayAccess = static_cast<HLSLArrayAccess*>(expression);
 
         const HLSLType& type = arrayAccess->array->expressionType;
-        ASSERT(type.array);
+		ASSERT_PARSER(type.array);
 
         unsigned int elementSize = 0;
         LayoutBufferElement(type, elementSize);
@@ -4430,13 +5148,13 @@ unsigned int GLSLGenerator::OutputBufferAccessIndex(HLSLExpression* expression, 
     }
     else
     {
-        ASSERT(!"IsBufferAccessExpression should have returned false");
+		ASSERT_PARSER(!"IsBufferAccessExpression should have returned false");
     }
 
     return 0;
 }
 
-HLSLFunction* GLSLGenerator::FindFunction(HLSLRoot* root, const char* name)
+HLSLFunction* GLSLGenerator::FindFunction(HLSLRoot* root, const CachedString & name)
 {
     HLSLStatement* statement = root->statement;
     while (statement != NULL)
@@ -4454,7 +5172,7 @@ HLSLFunction* GLSLGenerator::FindFunction(HLSLRoot* root, const char* name)
     return NULL;
 }
 
-HLSLStruct* GLSLGenerator::FindStruct(HLSLRoot* root, const char* name)
+HLSLStruct* GLSLGenerator::FindStruct(HLSLRoot* root, const CachedString & name)
 {
     HLSLStatement* statement = root->statement;
     while (statement != NULL)
@@ -4473,52 +5191,56 @@ HLSLStruct* GLSLGenerator::FindStruct(HLSLRoot* root, const char* name)
 }
 
 
-const char* GLSLGenerator::GetAttribQualifier(AttributeModifier modifier)
+CachedString GLSLGenerator::GetAttribQualifier(AttributeModifier modifier)
 {
     if (m_versionLegacy)
     {
         if (m_target == Target_VertexShader)
-            return (modifier == AttributeModifier_In) ? "attribute" : "varying";
+            return (modifier == AttributeModifier_In) ? MakeCached("attribute") : MakeCached("varying");
         else
-            return (modifier == AttributeModifier_In) ? "varying" : "out";
+            return (modifier == AttributeModifier_In) ? MakeCached("varying") : MakeCached("out");
     }
     else
     {
-        return (modifier == AttributeModifier_In) ? "in" : "out";
+        return (modifier == AttributeModifier_In) ? MakeCached("in") : MakeCached("out");
     }
 }
 
-void GLSLGenerator::OutputAttribute(const HLSLType& type, const char* semantic, AttributeModifier modifier, int *counter)
+void GLSLGenerator::OutputAttribute(const HLSLType& type, const CachedString & semantic, AttributeModifier modifier, int *counter)
 {
-    const char* qualifier = GetAttribQualifier(modifier);
-    const char* prefix = (modifier == AttributeModifier_In) ? m_inAttribPrefix : m_outAttribPrefix;
+    CachedString qualifier = GetAttribQualifier(modifier);
+    CachedString prefix = (modifier == AttributeModifier_In) ? m_inAttribPrefix : m_outAttribPrefix;
 
-    HLSLRoot* root = m_tree->GetRoot();
+	HLSLRoot* root = m_tree->GetRoot();
     if (type.baseType == HLSLBaseType_UserDefined)
     {
         // If the argument is a struct with semantics specified, we need to
         // grab them.
         HLSLStruct* structDeclaration = FindStruct(root, type.typeName);
-        ASSERT(structDeclaration != NULL);
+		ASSERT_PARSER(structDeclaration != NULL);
         HLSLStructField* field = structDeclaration->field;
         while (field != NULL)
         {
-            if (field->semantic != NULL && GetBuiltInSemantic(field->semantic, modifier, field->type ) == NULL)
+			CachedString builtinSemantic = GetBuiltInSemantic(field->semantic, modifier, field->type);
+
+            if (field->semantic.IsNotEmpty() && builtinSemantic.IsEmpty())
             {
-				m_writer.Write("layout(location = %d) ", (*counter)++);
+				m_writer.Write("layout(location = %d) ", *counter);
+
+				*counter += TypeArraySize(field->type);
 
 				if( (m_target == Target_HullShader && modifier == AttributeModifier_Out) || (m_target == Target_DomainShader && modifier == AttributeModifier_In))
-					m_writer.Write("patch %s ", qualifier);
+					m_writer.Write("patch %s ", FetchCstr(m_stringLibrary, qualifier));
 				else
-					m_writer.Write("%s ", qualifier );
+					m_writer.Write("%s ", FetchCstr(m_stringLibrary, qualifier) );
 				
 				char attribName[ 64 ];
-				String_Printf( attribName, 64, "%s%s", prefix, field->semantic );
+				String_Printf( attribName, 64, "%s%s", FetchCstr(m_stringLibrary, prefix), FetchCstr(m_stringLibrary, field->semantic));
 
 				if(field->type.baseType == HLSLBaseType_Int || field->type.baseType == HLSLBaseType_Uint && m_target != Target_VertexShader)
 					m_writer.Write("flat ");				
 					
-				OutputDeclaration(field->type, attribName);
+				OutputDeclaration(field->type, MakeCached(attribName));
 
 				if (m_target == Target_GeometryShader && modifier == AttributeModifier_In)
 					m_writer.Write("[]");
@@ -4528,30 +5250,30 @@ void GLSLGenerator::OutputAttribute(const HLSLType& type, const char* semantic, 
             field = field->nextField;
         }
     }
-    else if (semantic != NULL && GetBuiltInSemantic(semantic, modifier, type) == NULL)
+    else if (semantic.IsNotEmpty() && GetBuiltInSemantic(semantic, modifier, type).IsEmpty())
     {
 		m_writer.Write("layout(location = %d) ", (*counter)++);
-		m_writer.Write( "%s ", qualifier );
+		m_writer.Write( "%s ", FetchCstr(m_stringLibrary, qualifier) );
 		char attribName[ 64 ];
-		String_Printf( attribName, 64, "%s%s", prefix, semantic );
+		String_Printf( attribName, 64, "%s%s", FetchCstr(m_stringLibrary, prefix), FetchCstr(m_stringLibrary, semantic) );
 
 		if (type.baseType == HLSLBaseType_Int || type.baseType == HLSLBaseType_Uint && m_target != Target_VertexShader)
 			m_writer.Write("flat ");
 
-		OutputDeclaration( type, attribName );
+		OutputDeclaration( type, MakeCached(attribName) );
 		m_writer.EndLine(";");
     }
-	else if (semantic ==  NULL && (m_target == Target_HullShader || m_target == Target_DomainShader))
+	else if (semantic.IsEmpty() && (m_target == Target_HullShader || m_target == Target_DomainShader))
 	{
 		HLSLStruct* structDeclaration = FindStruct(root, type.typeName);
-		ASSERT(structDeclaration != NULL);
+		ASSERT_PARSER(structDeclaration != NULL);
 
 		HLSLStructField* field = structDeclaration->field;
 		while (field != NULL)
 		{
-			if (field->semantic != NULL)
+			if (field->semantic.IsNotEmpty())
 			{
-				const char* builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
+				CachedString builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
 
 				m_writer.Write("layout(location = %d) ", (*counter)++);
 
@@ -4559,12 +5281,15 @@ void GLSLGenerator::OutputAttribute(const HLSLType& type, const char* semantic, 
 				if (m_target == Target_DomainShader && modifier == AttributeModifier_In)
 					m_writer.Write("patch ");
 
-				m_writer.Write("%s ", qualifier);
+				m_writer.Write("%s ", FetchCstr(m_stringLibrary, qualifier));
 				
 				if (m_target == Target_HullShader && type.array)
 				{
 					field->type.array = true;
-					field->type.arraySize = type.arraySize;
+					field->type.arrayDimension = type.arrayDimension;
+					field->type.arrayExtent[0] = type.arrayExtent[0];
+					field->type.arrayExtent[1] = type.arrayExtent[1];
+					field->type.arrayExtent[2] = type.arrayExtent[2];
 				}
 				else if (m_target == Target_DomainShader)
 				{					
@@ -4572,16 +5297,16 @@ void GLSLGenerator::OutputAttribute(const HLSLType& type, const char* semantic, 
 				}
 
 				char attribName[64];
-				String_Printf(attribName, 64, "%s%s", m_inAttribPrefix, field->semantic);
+				String_Printf(attribName, 64, "%s%s", RawStr(m_inAttribPrefix), RawStr(field->semantic));
 				
 
-				if (builtInSemantic)
+				if (builtInSemantic.IsNotEmpty())
 				{
 					//m_writer.WriteLine(1, "%s.%s = %s;", GetSafeIdentifierName(argument->name), GetSafeIdentifierName(field->name), builtInSemantic);
 				}
 				else
 				{
-					OutputDeclaration(field->type, attribName);
+					OutputDeclaration(field->type, MakeCached(attribName));
 					//m_writer.Write("%s%s", , field->semantic);
 					//m_writer.WriteLine(0, %s%s;", GetSafeIdentifierName(argument->name), GetSafeIdentifierName(field->name), m_inAttribPrefix, field->semantic);
 				}
@@ -4589,23 +5314,21 @@ void GLSLGenerator::OutputAttribute(const HLSLType& type, const char* semantic, 
 			}
 			field = field->nextField;
 		}
-
-		
-
-		
 	}
 }
 
 void GLSLGenerator::OutputAttributes(HLSLFunction* entryFunction)
 {
     // Write out the input/output attributes to the shader.
-    HLSLArgument* argument = entryFunction->argument;
-
 	int inputCounter = 0;
 	int outputCounter = 0;
 
-    while (argument != NULL)
+	eastl::vector < HLSLArgument * > argumentVec = entryFunction->args;
+
+	for (int i = 0; i < argumentVec.size(); i++)
     {
+		HLSLArgument * argument = argumentVec[i];
+
         if (argument->modifier == HLSLArgumentModifier_None || argument->modifier == HLSLArgumentModifier_In)
             OutputAttribute(argument->type, argument->semantic, AttributeModifier_In, &inputCounter);
         if (argument->modifier == HLSLArgumentModifier_Out)
@@ -4641,24 +5364,24 @@ void GLSLGenerator::OutputAttributes(HLSLFunction* entryFunction)
 			{
 				m_writer.WriteLine(0, "layout(triangles_adjacency) in;");
 				OutputAttribute(argument->type, argument->semantic, AttributeModifier_In, &inputCounter);
-				String_Equal(m_geoInputdataType, argument->type.typeName);
+				String_Equal(m_geoInputdataType, RawStr(argument->type.typeName));
 			}
 			else if (argument->modifier == HLSLArgumentModifier_Inout)
 			{
 				if (argument->type.baseType == HLSLBaseType_PointStream)
 				{
-					strcpy(m_outputGeometryType, "points");
+					m_outputGeometryType = MakeCached("points");
 				}
 				else if (argument->type.baseType == HLSLBaseType_LineStream)
 				{
-					strcpy(m_outputGeometryType, "line_strip");
+					m_outputGeometryType = MakeCached("line_strip");
 				}
 				else if (argument->type.baseType == HLSLBaseType_TriangleStream)
 				{
-					strcpy(m_outputGeometryType, "triangle_strip");
+					m_outputGeometryType = MakeCached("triangle_strip");
 				}
 
-				if (argument->type.structuredTypeName)
+				if (argument->type.structuredTypeName.IsNotEmpty())
 				{
 					argument->type.baseType = HLSLBaseType_UserDefined;
 					argument->type.typeName = argument->type.structuredTypeName;
@@ -4671,23 +5394,19 @@ void GLSLGenerator::OutputAttributes(HLSLFunction* entryFunction)
 					OutputAttribute(argument->type, argument->semantic, AttributeModifier_Out, &outputCounter);
 					m_geoOutputdataType = argument->type.typeName;
 				}
-
-				
 			}
 		}
-
-        argument = argument->nextArgument;
     }
 
     // Write out the output attributes from the shader.
     OutputAttribute(entryFunction->returnType, entryFunction->semantic, AttributeModifier_Out, &outputCounter);
 }
 
-void GLSLGenerator::OutputSetOutAttribute(const char* semantic, const char* resultName)
+void GLSLGenerator::OutputSetOutAttribute(const char* semantic, const CachedString & resultName)
 {
     int outputIndex = -1;
-    const char* builtInSemantic = GetBuiltInSemantic(semantic, AttributeModifier_Out, &outputIndex);
-    if (builtInSemantic != NULL)
+    CachedString builtInSemantic = GetBuiltInSemantic(MakeCached(semantic), AttributeModifier_Out, &outputIndex);
+    if (builtInSemantic.IsNotEmpty())
     {
         if (String_Equal(builtInSemantic, "gl_Position"))
         {
@@ -4700,44 +5419,46 @@ void GLSLGenerator::OutputSetOutAttribute(const char* semantic, const char* resu
                 // We also need to convert the normalized device
                 // coordinates from the D3D convention of 0 to 1 to the
                 // OpenGL convention of -1 to 1.
-                m_writer.WriteLine(1, "vec4 temp = %s;", resultName);
-                m_writer.WriteLine(1, "%s = temp * vec4(1,-1,2,1) - vec4(0,0,temp.w,0);", builtInSemantic);
+                m_writer.WriteLine(1, "vec4 temp = %s;", FetchCstr(m_stringLibrary, resultName));
+                m_writer.WriteLine(1, "%s = temp * vec4(1,-1,2,1) - vec4(0,0,temp.w,0);", FetchCstr(m_stringLibrary, builtInSemantic));
             }
             else
             {
-                m_writer.WriteLine(1, "%s = %s;", builtInSemantic, resultName);
+                m_writer.WriteLine(1, "%s = %s;", FetchCstr(m_stringLibrary, builtInSemantic), FetchCstr(m_stringLibrary, resultName));
             }
 
+			// POSITION is not needed, gets output anyways as a regular semantict gl_POsition
+/*
 			if (String_Equal(semantic, "POSITION"))
 			{
-				m_writer.WriteLine(1, "%s%s = %s;", m_outAttribPrefix, semantic, resultName);
+				m_writer.WriteLine(1, "%s%s = %s;", FetchCstr(m_stringLibrary, m_outAttribPrefix), CHECK_CSTR(semantic), FetchCstr(m_stringLibrary, resultName));
 			}
-
+*/
             m_outputPosition = true;
         }
         else if (String_Equal(builtInSemantic, "gl_FragDepth"))
         {
             // If the value goes outside of the 0 to 1 range, the
             // fragment will be rejected unlike in D3D, so clamp it.
-            m_writer.WriteLine(1, "%s = clamp(float(%s), 0.0, 1.0);", builtInSemantic, resultName);
+            m_writer.WriteLine(1, "%s = clamp(float(%s), 0.0, 1.0);", FetchCstr(m_stringLibrary, builtInSemantic), FetchCstr(m_stringLibrary, resultName));
         }
         else if (outputIndex >= 0)
         {
             //m_writer.WriteLine(1, "%s[%d] = %s;", builtInSemantic, outputIndex, resultName);
-			m_writer.WriteLine(1, "%s%d = %s;", builtInSemantic, outputIndex, resultName);
+			m_writer.WriteLine(1, "%s%d = %s;", FetchCstr(m_stringLibrary, builtInSemantic), outputIndex, FetchCstr(m_stringLibrary, resultName));
         }
         else
         {
-            m_writer.WriteLine(1, "%s = %s;", builtInSemantic, resultName);
+            m_writer.WriteLine(1, "%s = %s;", FetchCstr(m_stringLibrary, builtInSemantic), FetchCstr(m_stringLibrary, resultName));
         }
     }
     else if (m_target == Target_FragmentShader)
     {
-        Error("Output attribute %s does not map to any built-ins", semantic);
+        Error("Output attribute %s does not map to any built-ins", CHECK_CSTR(semantic));
     }
     else
     {
-        m_writer.WriteLine(1, "%s%s = %s;", m_outAttribPrefix, semantic, resultName);
+        m_writer.WriteLine(1, "%s%s = %s;", FetchCstr(m_stringLibrary, m_outAttribPrefix), CHECK_CSTR(semantic), FetchCstr(m_stringLibrary, resultName));
     }
 }
 
@@ -4750,13 +5471,14 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
 
     // Create local variables for each of the parameters we'll need to pass
     // into the entry point function.
-    HLSLArgument* argument = entryFunction->argument;
-    while (argument != NULL)
+	eastl::vector < HLSLArgument * > argumentVec = entryFunction->args;
+	for (int i = 0; i < argumentVec.size(); i++)
     {
+		HLSLArgument * argument = argumentVec[i];
 		//DomainShader
-		if (m_target == Target_DomainShader && (entryFunction->argument == argument || argument->type.baseType == HLSLBaseType_OutputPatch ))
+		if (m_target == Target_DomainShader && (i == 0 || argument->type.baseType == HLSLBaseType_OutputPatch ))
 		{
-			argument = argument->nextArgument;
+			//argument = argument->nextArgument;
 			continue;
 		}
 
@@ -4764,20 +5486,18 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
         OutputDeclaration(argument->type, argument->name);
         m_writer.EndLine(";");
 
-        //if (argument->modifier != HLSLArgumentModifier_Out)
 		if ( !( (argument->modifier == HLSLArgumentModifier_Out) || (argument->modifier == HLSLArgumentModifier_Inout)))
         {
             // Set the value for the local variable.
             if (argument->type.baseType == HLSLBaseType_UserDefined)
             {
 				HLSLStruct* structDeclaration = FindStruct(root, argument->type.typeName);
-                ASSERT(structDeclaration != NULL);
+				ASSERT_PARSER(structDeclaration != NULL);
                 
 				
 				if (argument->type.array)
 				{
-					int arraySize = 0;
-					m_tree->GetExpressionValue(argument->type.arraySize, arraySize);
+					int arraySize = argument->type.arrayExtent[0];
 
 					for (int i = 0; i < arraySize; i++)
 					{
@@ -4785,19 +5505,19 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
 
 						while (field != NULL)
 						{
-							if (field->semantic != NULL)
+							if (field->semantic.IsNotEmpty())
 							{
-								const char* builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
-								if (builtInSemantic)
+								CachedString builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
+								if (builtInSemantic.IsNotEmpty())
 								{
 									if(String_Equal(builtInSemantic, "gl_in"))
-										m_writer.WriteLine(1, "%s[%d].%s = %s[%d].gl_Position;", GetSafeIdentifierName(argument->name), i, GetSafeIdentifierName(field->name), builtInSemantic, i);
+										m_writer.WriteLine(1, "%s[%d].%s = %s[%d].gl_Position;", RawStr(GetSafeIdentifierName(argument->name)), i, RawStr(GetSafeIdentifierName(field->name)), RawStr(builtInSemantic), i);
 									else
-										m_writer.WriteLine(1, "%s[%d].%s = %s;", GetSafeIdentifierName(argument->name), i, GetSafeIdentifierName(field->name), builtInSemantic);
+										m_writer.WriteLine(1, "%s[%d].%s = %s;", RawStr(GetSafeIdentifierName(argument->name)), i, RawStr(GetSafeIdentifierName(field->name)), RawStr(builtInSemantic));
 								}
 								else
 								{
-									m_writer.WriteLine(1, "%s[%d].%s = %s%s[%d];", GetSafeIdentifierName(argument->name), i, GetSafeIdentifierName(field->name), m_inAttribPrefix, field->semantic, i);
+									m_writer.WriteLine(1, "%s[%d].%s = %s%s[%d];", RawStr(GetSafeIdentifierName(argument->name)), i, RawStr(GetSafeIdentifierName(field->name)), RawStr(m_inAttribPrefix), RawStr(field->semantic), i);
 								}
 							}
 							field = field->nextField;
@@ -4810,16 +5530,16 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
 
 					while (field != NULL)
 					{
-						if (field->semantic != NULL)
+						if (field->semantic.IsNotEmpty())
 						{
-							const char* builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
-							if (builtInSemantic)
+							CachedString builtInSemantic = GetBuiltInSemantic(field->semantic, AttributeModifier_In);
+							if (builtInSemantic.IsNotEmpty())
 							{
-								m_writer.WriteLine(1, "%s.%s = %s;", GetSafeIdentifierName(argument->name), GetSafeIdentifierName(field->name), builtInSemantic);
+								m_writer.WriteLine(1, "%s.%s = %s;", RawStr(GetSafeIdentifierName(argument->name)), RawStr(GetSafeIdentifierName(field->name)), RawStr(builtInSemantic));
 							}
 							else
 							{
-								m_writer.WriteLine(1, "%s.%s = %s%s;", GetSafeIdentifierName(argument->name), GetSafeIdentifierName(field->name), m_inAttribPrefix, field->semantic);
+								m_writer.WriteLine(1, "%s.%s = %s%s;", RawStr(GetSafeIdentifierName(argument->name)), RawStr(GetSafeIdentifierName(field->name)), RawStr(m_inAttribPrefix), RawStr(field->semantic));
 							}
 						}
 						field = field->nextField;
@@ -4828,88 +5548,78 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
 				
 				
             }
-            else if (argument->semantic != NULL)
+            else if (argument->semantic.IsNotEmpty())
             {
-                const char* builtInSemantic = GetBuiltInSemantic(argument->semantic, AttributeModifier_In);
-                if (builtInSemantic)
+                CachedString builtInSemantic = GetBuiltInSemantic(argument->semantic, AttributeModifier_In);
+                if (builtInSemantic.IsNotEmpty())
                 {
 					if (m_target == Target_DomainShader && String_Equal("gl_TessCoord", builtInSemantic))
 					{
 						char additionalBuiltIn[64];
 
 						if (String_Equal(m_domain, "\"quad\"") || String_Equal(m_domain, "\"isoline\""))
-							String_Printf(additionalBuiltIn, 64, "%s.xy", builtInSemantic);
+							String_Printf(additionalBuiltIn, 64, "%s.xy", RawStr(builtInSemantic));
 						else if (String_Equal(m_domain, "\"tri\""))
-							String_Printf(additionalBuiltIn, 64, "%s.xyz", builtInSemantic);
+							String_Printf(additionalBuiltIn, 64, "%s.xyz", RawStr(builtInSemantic));
 
-						m_writer.WriteLine(1, "%s = %s;", GetSafeIdentifierName(argument->name), additionalBuiltIn);
+						m_writer.WriteLine(1, "%s = %s;", RawStr(GetSafeIdentifierName(argument->name)), additionalBuiltIn);
 					}
 					else
-						m_writer.WriteLine(1, "%s = %s;", GetSafeIdentifierName(argument->name), builtInSemantic);
+						m_writer.WriteLine(1, "%s = %s;", RawStr(GetSafeIdentifierName(argument->name)), RawStr(builtInSemantic));
                 }
                 else
                 {
-                    m_writer.WriteLine(1, "%s = %s%s;", GetSafeIdentifierName(argument->name), m_inAttribPrefix, argument->semantic);
+                    m_writer.WriteLine(1, "%s = %s%s;", RawStr(GetSafeIdentifierName(argument->name)), RawStr(m_inAttribPrefix), RawStr(argument->semantic));
                 }
             }
         }
-
-        argument = argument->nextArgument;
     }
-
 
 	m_writer.BeginLine(0);
 	//Need to call PatchConstantFunction in Main, if it is a Hull shader
 	if (m_target == Target_HullShader)
 	{
 		//remove double quotes
-
-		if (String_Equal(m_patchconstantfunc, "") || m_patchconstantfunc == NULL)
+		if (String_Equal(m_patchconstantfunc, "") || m_patchconstantfunc.IsEmpty())
 		{
 			// need error handling
 			return;
 		}
 
 		char newFuncName[64];
-		strcpy(newFuncName, m_patchconstantfunc + 1);
+		strcpy(newFuncName, RawStr(m_patchconstantfunc) + 1);
 		newFuncName[strlen(newFuncName)-1] = 0;
 
-		m_writer.Write("%s(", newFuncName);
+		m_writer.Write("%s(", CHECK_CSTR(newFuncName));
 
-		int numArgs = 0;
-		argument = entryFunction->argument;
-
-		bool bExist = true;
+		int firstArgument = 0;
 
 		//DomainShader
-		if (m_target == Target_DomainShader && entryFunction->argument == argument)
+		if (m_target == Target_DomainShader) // && entryFunction->argument == argument)
 		{
-			argument = argument->nextArgument;
+			firstArgument = 1;
 		}
 
-		while (argument != NULL)
+		int numWritten = 0;
+		for (int i = firstArgument; i < argumentVec.size(); i++)
 		{
+			HLSLArgument * argument = argumentVec[i];
 			if (argument->type.baseType == HLSLBaseType_InputPatch || argument->type.baseType == HLSLBaseType_OutputPatch)
 			{
-				bExist = false;
-				argument = argument->nextArgument;
 				continue;
 			}
 			else
 			{
-				bExist = true;
 			}
 
-			if (numArgs > 0 && bExist)
+			if (numWritten > 0)
 			{
 				m_writer.Write(", ");
 			}
 
-			if (bExist)
-				m_writer.Write("%s", GetSafeIdentifierName(argument->name));
+			m_writer.Write("%s", FetchCstr(m_stringLibrary, GetSafeIdentifierName(argument->name)));
 
-			argument = argument->nextArgument;
-			++numArgs;
+			numWritten++;
 		}
 
 		m_writer.EndLine(");");
@@ -4920,109 +5630,93 @@ void GLSLGenerator::OutputEntryCaller(HLSLFunction* entryFunction)
     // Call the original entry function.
     m_writer.BeginLine(1);
     if (entryFunction->returnType.baseType != HLSLBaseType_Void)
-        m_writer.Write("%s %s = ", GetTypeName(entryFunction->returnType), resultName);
+        m_writer.Write("%s %s = ", CHECK_CSTR(GetTypeName(entryFunction->returnType)), CHECK_CSTR(resultName));
     
 	if(String_Equal(m_entryName, "main"))
-		m_writer.Write("HLSL%s(", m_entryName);
+		m_writer.Write("HLSL%s(", FetchCstr(m_stringLibrary, m_entryName));
 	else
-		m_writer.Write("%s(", m_entryName);
+		m_writer.Write("%s(", FetchCstr(m_stringLibrary, m_entryName));
 	
-
-    int numArgs = 0;
-    argument = entryFunction->argument;
-
-	bool bExist = true;
+	int firstArgument = 0;
 
 	//DomainShader
-	if (m_target == Target_DomainShader && entryFunction->argument == argument)
+	if (m_target == Target_DomainShader)
 	{
-		argument = argument->nextArgument;
+		firstArgument = 1;
 	}
 
-    while (argument != NULL)
+	int numWritten = 0;
+	for (int i = firstArgument; i < argumentVec.size(); i++)
     {		
-
+		HLSLArgument * argument = argumentVec[i];
 		if (argument->type.baseType == HLSLBaseType_InputPatch || argument->type.baseType == HLSLBaseType_OutputPatch)
 		{
-			bExist = false;
-			argument = argument->nextArgument;
 			continue;
 		}
 		else if (m_target == Target_GeometryShader && argument->modifier == HLSLArgumentModifier_Inout)
 		{
-			bExist = false;
-			argument = argument->nextArgument;
 			continue;
 		}
 		else
 		{
-			bExist = true;
 		}
 
-        if (numArgs > 0 && bExist)
+        if (numWritten > 0)
         {
             m_writer.Write(", ");
         }
 
-
-		if(bExist)
-			m_writer.Write("%s", GetSafeIdentifierName(argument->name));
+		m_writer.Write("%s", FetchCstr(m_stringLibrary, GetSafeIdentifierName(argument->name)));
         
-
-        argument = argument->nextArgument;
-        ++numArgs;
+		numWritten++;
     }
     m_writer.EndLine(");");
 
     // Copy values from the result into the out attributes as necessary.
-    argument = entryFunction->argument;
-    while (argument != NULL)
+	for (int i = 0; i < argumentVec.size(); i++)
     {
-        if (argument->modifier == HLSLArgumentModifier_Out && argument->semantic)
-            OutputSetOutAttribute(argument->semantic, GetSafeIdentifierName(argument->name));
-
-        argument = argument->nextArgument;
+		HLSLArgument * argument = argumentVec[i];
+        if (argument->modifier == HLSLArgumentModifier_Out && argument->semantic.IsNotEmpty())
+            OutputSetOutAttribute(RawStr(argument->semantic), GetSafeIdentifierName(argument->name));
     }
 
     if (entryFunction->returnType.baseType == HLSLBaseType_UserDefined)
     {
 		HLSLStruct* structDeclaration = FindStruct(root, entryFunction->returnType.typeName);
-		ASSERT(structDeclaration != NULL);
+		ASSERT_PARSER(structDeclaration != NULL);
 		HLSLStructField* field = structDeclaration->field;
 		while (field != NULL)
 		{
 			char fieldResultName[1024];
 
-			if (!field->name)
+			if (field->name.IsEmpty())
 			{
 				field = field->nextField;
 				continue;
 			}
 
 
-			String_Printf(fieldResultName, sizeof(fieldResultName), "%s.%s", resultName, field->name);
-			OutputSetOutAttribute(field->semantic, fieldResultName);
+			String_Printf(fieldResultName, sizeof(fieldResultName), "%s.%s", resultName, RawStr(field->name));
+			OutputSetOutAttribute(RawStr(field->semantic), MakeCached(fieldResultName));
 
 			if (m_target == Target_HullShader)
 			{
-				if (field->semantic)
+				if (field->semantic.IsEmpty())
 				{
 					if(String_Equal(field->semantic, "POSITION"))
 					{
-						m_writer.WriteLine(1, "gl_out[gl_InvocationID].gl_Position = %s%s;", m_outAttribPrefix, field->semantic);
+						m_writer.WriteLine(1, "gl_out[gl_InvocationID].gl_Position = %s%s;", RawStr(m_outAttribPrefix), RawStr(field->semantic));
 					}
 				}
-
-				
 			}
-
 
 			field = field->nextField;
 		}
     }
-    else if (entryFunction->semantic != NULL)
+    else if (entryFunction->semantic.IsNotEmpty())
     {
-        OutputSetOutAttribute(entryFunction->semantic, resultName);
+		// translate the name
+        OutputSetOutAttribute(RawStr(entryFunction->semantic), MakeCached(resultName));
     }
 
     m_writer.WriteLine(0, "}");
@@ -5038,30 +5732,12 @@ void GLSLGenerator::OutputDeclaration(HLSLDeclaration* declaration)
 		if( lastDecl )
 			m_writer.Write( ", " );
 
-		OutputDeclarationBody( declaration->type, GetSafeIdentifierName( declaration->name ) );
+		OutputDeclarationBody( declaration->type, GetSafeIdentifierName( declaration->name) );
 
 		if( declaration->assignment != NULL )
 		{
 			m_writer.Write( " = " );
-			if( declaration->type.array )
-			{
-				//m_writer.Write( "%s[]( ", GetTypeName( declaration->type ) );
-				m_writer.Write("{");
-				OutputExpressionList( declaration->assignment );
-				m_writer.Write("}");
-				//m_writer.Write( " )" );
-			}
-			else if (declaration->assignment->nextExpression)
-			{
-				// matrix's element initialization syntax.
-				m_writer.Write("{");
-				OutputExpressionList(declaration->assignment);
-				m_writer.Write("}");
-			}
-			else
-			{
-				OutputExpression( declaration->assignment, &declaration->type );
-			}
+			OutputExpression( declaration->assignment, &declaration->type );
 		}
 
 		lastDecl = declaration;
@@ -5069,9 +5745,8 @@ void GLSLGenerator::OutputDeclaration(HLSLDeclaration* declaration)
 	}
 }
 
-void GLSLGenerator::OutputDeclaration(const HLSLType& type, const char* name)
+void GLSLGenerator::OutputDeclaration(const HLSLType& type, const CachedString & name)
 {
-	
 	if (!(type.baseType == HLSLBaseType_InputPatch ||
 		type.baseType == HLSLBaseType_OutputPatch /*||
 		
@@ -5091,34 +5766,35 @@ void GLSLGenerator::OutputDeclaration(const HLSLType& type, const char* name)
 void GLSLGenerator::OutputDeclarationType( const HLSLType& type )
 {
 	
-	m_writer.Write( "%s ", GetTypeName( type ) );
+	m_writer.Write( "%s ", CHECK_CSTR(GetTypeName( type )) );
 }
 
-void GLSLGenerator::OutputDeclarationBody( const HLSLType& type, const char* name )
+void GLSLGenerator::OutputDeclarationBody( const HLSLType& type, const CachedString & name)
 {
 	if( !type.array )
 	{
-		m_writer.Write( "%s", GetSafeIdentifierName( name ) );
+		m_writer.Write( "%s", FetchCstr(m_stringLibrary, GetSafeIdentifierName( name)) );
 	}
 	else
 	{
 		
-		m_writer.Write("%s[", GetSafeIdentifierName(name));
+		m_writer.Write("%s[", FetchCstr(m_stringLibrary, GetSafeIdentifierName(name)));
 
-		if (type.arraySize != NULL)		
-			OutputExpression(type.arraySize);
+		if (type.arrayExtent[0])		
+			m_writer.Write("%d", type.arrayExtent[0]);
 		
 		m_writer.Write("]");
 	
 	}
+
 }
 
 void GLSLGenerator::OutputCast(const HLSLType& type)
 {
-    if (m_version == Version_110 && type.baseType == HLSLBaseType_Float3x3)
-        m_writer.Write("%s", m_matrixCtorFunction);
+    if (m_version == Version_110 && (type.baseType == HLSLBaseType_Float3x3 || type.baseType == HLSLBaseType_Half3x3 || type.baseType == HLSLBaseType_Min16Float3x3 || type.baseType == HLSLBaseType_Min10Float3x3))
+        m_writer.Write("%s", FetchCstr(m_stringLibrary, m_matrixCtorFunction));
     else
-        OutputDeclaration(type, "");
+		m_writer.Write("%s", GetBaseTypeConstructor(type.baseType));
 }
 
 void GLSLGenerator::Error(const char* format, ...)
@@ -5138,264 +5814,250 @@ void GLSLGenerator::Error(const char* format, ...)
     va_end(arg);
 } 
 
-const char* GLSLGenerator::GetSafeIdentifierName(const char* name) const
+CachedString GLSLGenerator::GetSafeIdentifierName(const CachedString & name) const
 {
-    for (int i = 0; i < s_numReservedWords; ++i)
-    {
-        if (String_Equal(s_reservedWord[i], name))
-        {
-            return m_reservedWord[i];
-        }
-    }
-    return name;
+	for (int i = 0; i < s_numReservedWords; ++i)
+	{
+		if (String_Equal(s_reservedWord[i], name))
+		{
+			return m_reservedWord[i];
+		}
+	}
+	return name;
 }
 
-bool GLSLGenerator::ChooseUniqueName(const char* base, char* dst, int dstLength) const
+bool GLSLGenerator::ChooseUniqueName(const char* base, CachedString & dstName) const
 {
-    for (int i = 0; i < 1024; ++i)
-    {
-        String_Printf(dst, dstLength, "%s%d", base, i);
-        if (!m_tree->GetContainsString(dst))
-        {
-            return true;
-        }
-    }
-    return false;
+	// IC: Try without suffix first.
+	char dst[1024];
+	int dstLength = 1024;
+	String_Printf(dst, dstLength, "%s", CHECK_CSTR(base));
+	if (!m_tree->GetContainsString(base))
+	{
+		dstName = m_tree->AddStringCached(dst);
+		return true;
+	}
+
+	for (int i = 1; i < 1024; ++i)
+	{
+		String_Printf(dst, dstLength, "%s%d", CHECK_CSTR(base), i);
+		if (!m_tree->GetContainsString(dst))
+		{
+			dstName = m_tree->AddStringCached(dst);
+			return true;
+		}
+	}
+	return false;
 }
 
-const char* GLSLGenerator::GetBuiltInSemantic(const char* semantic, AttributeModifier modifier, int* outputIndex)
+
+
+CachedString GLSLGenerator::GetBuiltInSemantic(const CachedString & semantic, AttributeModifier modifier, int* outputIndex)
 {
     if (outputIndex)
         *outputIndex = -1;
 	
     if ((m_target == Target_VertexShader || m_target == Target_DomainShader) && modifier == AttributeModifier_Out && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-        return "gl_Position";
+        return MakeCached("gl_Position");
 
-	if (m_target == Target_VertexShader && modifier == AttributeModifier_Out && String_Equal(semantic, "POSITION") && !m_outputPosition)
-		return "gl_Position";
+	//if (m_target == Target_VertexShader && modifier == AttributeModifier_Out && String_Equal(semantic, "POSITION") && !m_outputPosition)
+	//	return MakeCached("gl_Position");
 
     if (m_target == Target_VertexShader && modifier == AttributeModifier_Out && String_Equal(semantic, "PSIZE"))
-        return "gl_PointSize";
+        return MakeCached("gl_PointSize");
 
     if (m_target == Target_VertexShader && modifier == AttributeModifier_In && String_Equal(semantic, "SV_InstanceID"))
-        return "gl_InstanceIndex";
+        return MakeCached("gl_InstanceIndex");
 
 	if (m_target == Target_VertexShader && modifier == AttributeModifier_In && String_Equal(semantic, "SV_VertexID"))
-		return "gl_VertexIndex";
+		return MakeCached("gl_VertexIndex");
 
-    if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out && String_Equal(semantic, "SV_Depth"))
-        return "gl_FragDepth";
+	if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out && String_Equal(semantic, "SV_Depth"))
+		return MakeCached("gl_FragDepth");
+
+	if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out && String_Equal(semantic, "SV_DEPTH"))
+		return MakeCached("gl_FragDepth");
 
 	//https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/gl_FragCoord.xhtml
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-		return "vec4(gl_FragCoord.xyz, 1.0 / gl_FragCoord.w)";
+		return MakeCached("vec4(gl_FragCoord.xyz, 1.0 / gl_FragCoord.w)");
 
 	if (m_target == Target_GeometryShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-		return "gl_in";
+		return MakeCached("gl_in");
 
 	if (m_target == Target_GeometryShader && modifier == AttributeModifier_Out && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-			return "gl_Position";
+			return MakeCached("gl_Position");
 	
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_DispatchThreadID")))
-		return "gl_GlobalInvocationID";
+		return MakeCached("gl_GlobalInvocationID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupID")))
-		return "gl_WorkGroupID";
+		return MakeCached("gl_WorkGroupID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupID")))
-		return "gl_WorkGroupID";
+		return MakeCached("gl_WorkGroupID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupIndex")))
-		return "gl_LocalInvocationIndex";
+		return MakeCached("gl_LocalInvocationIndex");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupThreadID")))
-		return "gl_LocalInvocationID";
+		return MakeCached("gl_LocalInvocationID");
 
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_SampleIndex")))
-		return "gl_SampleID";
+		return MakeCached("gl_SampleID");
 
 	if ((m_target == Target_HullShader || m_target == Target_DomainShader) && (String_Equal(semantic, "SV_InsideTessFactor")))
-		return "gl_TessLevelInner";
+		return MakeCached("gl_TessLevelInner");
 
 	if ((m_target == Target_HullShader || m_target == Target_DomainShader)&& (String_Equal(semantic, "SV_TessFactor")))
-		return "gl_TessLevelOuter";
+		return MakeCached("gl_TessLevelOuter");
 
 	if (m_target == Target_HullShader && (String_Equal(semantic, "SV_OutputControlPointID")))
-		return "gl_InvocationID";
+		return MakeCached("gl_InvocationID");
 
 	if (m_target == Target_DomainShader && (String_Equal(semantic, "SV_DomainLocation")))
-		return "gl_TessCoord";
+		return MakeCached("gl_TessCoord");
 	
+	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_IsFrontFace")))
+		return MakeCached("gl_FrontFacing");
 
     if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out)
     {
         int index = -1;
 
-        if (strncmp(semantic, "COLOR", 5) == 0)
-            index = atoi(semantic + 5);
-        else if (strncmp(semantic, "SV_Target", 9) == 0 || strncmp(semantic, "SV_TARGET", 9) == 0)
-            index = atoi(semantic + 9);
+        if (strncmp(FetchCstr(m_stringLibrary, semantic), "COLOR", 5) == 0)
+            index = atoi(FetchCstr(m_stringLibrary, semantic) + 5);
+        else if (strncmp(FetchCstr(m_stringLibrary, semantic), "SV_Target", 9) == 0 || strncmp(FetchCstr(m_stringLibrary, semantic), "SV_TARGET", 9) == 0)
+            index = atoi(FetchCstr(m_stringLibrary, semantic) + 9);
 
         if (index >= 0)
         {
-			if (m_outputTargets <= index)
-				m_outputTargets = index + 1;
+			if (m_outputTypes.size() <= index)
+			{
+				m_outputTypes.resize(index + 1);
+			}
 
             if (outputIndex)
                 *outputIndex = index;
 
-            return m_versionLegacy ? "gl_FragData" : "rast_FragData";
+            return m_versionLegacy ? MakeCached("gl_FragData") : MakeCached("rast_FragData");
         }
     }
 
-	
-
-    return NULL;
+	return CachedString();
 }
 
-
-const char* GLSLGenerator::GetBuiltInSemantic(const char* semantic, AttributeModifier modifier, const HLSLType& type, int* outputIndex)
+CachedString GLSLGenerator::GetBuiltInSemantic(const CachedString & semantic, AttributeModifier modifier, const HLSLType& type, int* outputIndex)
 {
 	if (outputIndex)
 		*outputIndex = -1;
 
 	if ((m_target == Target_VertexShader || m_target == Target_DomainShader) && modifier == AttributeModifier_Out && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-		return "gl_Position";
+		return MakeCached("gl_Position");
 
 	//if (m_target == Target_VertexShader && modifier == AttributeModifier_Out && String_Equal(semantic, "POSITION") && !m_outputPosition)
 	//	return "gl_Position";
 
 	if (m_target == Target_GeometryShader && (modifier == AttributeModifier_In || modifier == AttributeModifier_Out) && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-		return "gl_Position";
+		return MakeCached("gl_Position");
 
 
 	if (m_target == Target_VertexShader && modifier == AttributeModifier_Out && String_Equal(semantic, "PSIZE"))
-		return "gl_PointSize";
+		return MakeCached("gl_PointSize");
 
 	if (m_target == Target_VertexShader && modifier == AttributeModifier_In && String_Equal(semantic, "SV_InstanceID"))
-		return "gl_InstanceIndex";
+		return MakeCached("gl_InstanceIndex");
 
 	if (m_target == Target_VertexShader && modifier == AttributeModifier_In && String_Equal(semantic, "SV_VertexID"))
-		return "gl_VertexIndex";
+		return MakeCached("gl_VertexIndex");
 
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out && String_Equal(semantic, "SV_Depth"))
-		return "gl_FragDepth";
+		return MakeCached("gl_FragDepth");
 
 	//https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/gl_FragCoord.xhtml
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_POSITION") || String_Equal(semantic, "SV_Position")))
-		return "vec4(gl_FragCoord.xyz, 1.0 / gl_FragCoord.w)";
+		return MakeCached("vec4(gl_FragCoord.xyz, 1.0 / gl_FragCoord.w)");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_DispatchThreadID")))
-		return "gl_GlobalInvocationID";
+		return MakeCached("gl_GlobalInvocationID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupID")))
-		return "gl_WorkGroupID";
+		return MakeCached("gl_WorkGroupID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupID")))
-		return "gl_WorkGroupID";
+		return MakeCached("gl_WorkGroupID");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupIndex")))
-		return "gl_LocalInvocationIndex";
+		return MakeCached("gl_LocalInvocationIndex");
 
 	if (m_target == Target_ComputeShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_GroupThreadID")))
-		return "gl_LocalInvocationID";
+		return MakeCached("gl_LocalInvocationID");
 
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_SampleIndex")))
-		return "gl_SampleID";
+		return MakeCached("gl_SampleID");
 
 	if ((m_target == Target_HullShader || m_target == Target_DomainShader) && (String_Equal(semantic, "SV_InsideTessFactor")))
-		return "gl_TessLevelInner";
+		return MakeCached("gl_TessLevelInner");
 
 	if ((m_target == Target_HullShader || m_target == Target_DomainShader) && (String_Equal(semantic, "SV_TessFactor")))
-		return "gl_TessLevelOuter";
+		return MakeCached("gl_TessLevelOuter");
 
 	if (m_target == Target_HullShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_OutputControlPointID")))
-		return "gl_InvocationID";
+		return MakeCached("gl_InvocationID");
 
 	if (m_target == Target_DomainShader && (String_Equal(semantic, "SV_DomainLocation")))
-		return "gl_TessCoord";
+		return MakeCached("gl_TessCoord");
+
+	if (m_target == Target_FragmentShader && modifier == AttributeModifier_In && (String_Equal(semantic, "SV_IsFrontFace")))
+		return MakeCached("gl_FrontFacing");
 
 	if (m_target == Target_FragmentShader && modifier == AttributeModifier_Out)
 	{
 		int index = -1;
 
-		if (strncmp(semantic, "COLOR", 5) == 0)
-			index = atoi(semantic + 5);
-		else if (strncmp(semantic, "SV_Target", 9) == 0 || strncmp(semantic, "SV_TARGET", 9) == 0)
-			index = atoi(semantic + 9);
+		if (strncmp(FetchCstr(m_stringLibrary, semantic), "COLOR", 5) == 0)
+			index = atoi(FetchCstr(m_stringLibrary, semantic) + 5);
+		else if (strncmp(FetchCstr(m_stringLibrary, semantic), "SV_Target", 9) == 0 || strncmp(FetchCstr(m_stringLibrary, semantic), "SV_TARGET", 9) == 0)
+			index = atoi(FetchCstr(m_stringLibrary, semantic) + 9);
 
 		if (index >= 0)
 		{
-			if (m_outputTargets <= index)
+			if (m_outputTypes.size() <= index)
 			{
-				m_outputTypes[m_outputTargets] = type.baseType;
-				m_outputTargets = index + 1;				
+				m_outputTypes.push_back(type.baseType);
 			}
 
 			if (outputIndex)
 				*outputIndex = index;
 
-			return m_versionLegacy ? "gl_FragData" : "rast_FragData";
+			return m_versionLegacy ? MakeCached("gl_FragData") : MakeCached("rast_FragData");
 		}
 	}
 
 
 
-	return NULL;
+	return CachedString();
 }
 
-void GLSLGenerator::OutPushConstantIdentifierTextureStateExpression(int size, int counter, const HLSLTextureStateExpression* pTextureStateExpression, bool* bWritten)
+CachedString GLSLGenerator::MakeCached(const char * str)
 {
-	for (int index = 0; index < size; index++)
-	{
-		HLSLBuffer* buffer = static_cast<HLSLBuffer*>(m_PushConstantBuffers[index]);
-		HLSLDeclaration* field = buffer->field;
-
-		while (field != NULL)
-		{
-			if (!field->hidden)
-			{
-				if (String_Equal(field->name, pTextureStateExpression->arrayIdentifier[counter]))
-				{
-					*bWritten = true;
-					m_writer.Write("%s.%s", buffer->name, pTextureStateExpression->arrayIdentifier[counter]);
-					break;
-				}
-			}
-			field = (HLSLDeclaration*)field->nextStatement;
-		}
-
-		if (*bWritten)
-			break;
-	}
+	CachedString ret = m_tree->AddStringCached(str);
+	return ret;
 }
 
-/*
-void GLSLGenerator::OutPushConstantIdentifierRWTextureStateExpression(int size, int counter, const HLSLRWTextureStateExpression* pRWTextureStateExpression, bool* bWritten)
+void GLSLGenerator::OutputArrayExpression(int arrayDimension, HLSLExpression* (&arrayDimExpression)[MAX_DIM])
 {
-	for (int index = 0; index < m_PushConstantBufferCounter; index++)
+	for (int i = 0; i < arrayDimension; i++)
 	{
-		HLSLConstantBuffer* buffer = static_cast<HLSLConstantBuffer*>(m_PushConstantBuffers[index]);
-		HLSLDeclaration* field = buffer->field;
-
-		while (field != NULL)
+		if (arrayDimExpression[i])
 		{
-			if (!field->hidden)
-			{
-				if (String_Equal(field->name, pRWTextureStateExpression->arrayIdentifier[index]))
-				{
-					*bWritten = true;
-					m_writer.Write("%s.%s", buffer->name, pRWTextureStateExpression->arrayIdentifier[index]);
-					break;
-				}
-			}
-			field = (HLSLDeclaration*)field->nextStatement;
+			m_writer.Write("[");
+			OutputExpression(arrayDimExpression[i]);
+			m_writer.Write("]");
 		}
-
-		if (*bWritten)
-			break;
+		else
+		{
+			m_writer.Write("[]");
+		}
 	}
 }
-*/
-
-

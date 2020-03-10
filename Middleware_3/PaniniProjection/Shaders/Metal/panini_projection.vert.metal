@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -130,7 +130,7 @@ float2 PaniniProjectionScreenPosition(float2 screenPosition, float fovH, float D
 
 // Vertex shader
 vertex VSOutput stageMain(VSInput input [[stage_in]],
-                       constant PaniniParameters& PaniniRootConstants [[buffer(1)]])
+                       constant PaniniParameters& PaniniRootConstants [[buffer(UPDATE_FREQ_USER)]])
 {
     VSOutput output;
     

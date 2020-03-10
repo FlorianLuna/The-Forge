@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -25,8 +25,8 @@
 */
 
 
-layout (set=0, binding=0) uniform texture2D  uTex0;
-layout (set=0, binding=1) uniform sampler   uSampler0;
+layout (UPDATE_FREQ_PER_FRAME, binding=0) uniform texture2D  uTex0;
+layout (UPDATE_FREQ_NONE, binding=1) uniform sampler   uSampler0;
 
 layout(location = 0) in vec2 texcoord;
 

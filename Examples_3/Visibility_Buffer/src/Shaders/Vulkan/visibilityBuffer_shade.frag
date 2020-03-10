@@ -1,10 +1,7 @@
 #version 450 core
-#if !defined(WINDOWS) && !defined(ANDROID) && !defined(LINUX)
-#define WINDOWS 	// Assume windows if no platform define has been added to the shader
-#endif
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -118,118 +115,85 @@ struct VertexPos
 	float x, y, z;
 };
 
-#ifdef LINUX
-struct VertexNormal
-{
-	float x, y, z;
-};
 
-struct VertexTangent
-{
-	float x, y, z;
-};
-#endif
-
-
-layout(std430, set = 0, binding = 0) readonly buffer vertexPos
+layout(std430, UPDATE_FREQ_NONE, binding = 0) readonly buffer vertexPos
 {
 	VertexPos vertexPosData[];
 };
 
-layout(std430, set = 0, binding = 1) readonly buffer vertexTexCoord
+layout(std430, UPDATE_FREQ_NONE, binding = 1) readonly buffer vertexTexCoord
 {
-#ifdef WINDOWS
 	uint vertexTexCoordData[];
-#elif defined(LINUX)
-	vec2 vertexTexCoordData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 2) readonly buffer vertexNormal
+layout(std430, UPDATE_FREQ_NONE, binding = 2) readonly buffer vertexNormal
 {
-#ifdef WINDOWS
 	uint vertexNormalData[];
-#elif defined(LINUX)
-	VertexNormal vertexNormalData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 3) readonly buffer vertexTangent
+layout(std430, UPDATE_FREQ_NONE, binding = 3) readonly buffer vertexTangent
 {
-#ifdef WINDOWS
 	uint vertexTangentData[];
-#elif defined(LINUX)
-	VertexTangent vertexTangentData[];
-#endif
 };
 
-layout(std430, set = 0, binding = 4) readonly buffer filteredIndexBuffer
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 4) readonly buffer filteredIndexBuffer
 {
 	uint filteredIndexBufferData[];
 };
 
-layout(std430, set = 0, binding = 5) readonly buffer indirectMaterialBuffer
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 5) readonly buffer indirectMaterialBuffer
 {
 	uint indirectMaterialBufferData[];
 };
 
-layout(std430, set = 0, binding = 6) readonly buffer meshConstantsBuffer
+layout(std430, UPDATE_FREQ_NONE, binding = 6) readonly buffer meshConstantsBuffer
 {
 	MeshConstants meshConstantsBufferData[];
 };
 
-layout(set = 0, binding = 7) uniform sampler textureSampler;
-layout(set = 0, binding = 8) uniform sampler depthSampler;
+layout(UPDATE_FREQ_NONE, binding = 7) uniform sampler textureSampler;
+layout(UPDATE_FREQ_NONE, binding = 8) uniform sampler depthSampler;
 
 // Per frame descriptors
-layout(std430, set = 0, binding = 9) readonly buffer indirectDrawArgsBlock
+layout(std430, UPDATE_FREQ_PER_FRAME, binding = 9) readonly buffer indirectDrawArgsBlock
 {
 	uint indirectDrawArgsData[];
 } indirectDrawArgs[2];
 
-layout(set = 0, binding = 10) uniform uniforms
+layout(UPDATE_FREQ_PER_FRAME, binding = 10) uniform uniforms
 {
 	PerFrameConstants uniformsData;
 };
 
-layout(set = 0, binding = 11) restrict readonly buffer lights
+layout(UPDATE_FREQ_NONE, binding = 11) restrict readonly buffer lights
 {
 	LightData lightsBuffer[];
 };
 
-layout(set = 0, binding = 12) restrict readonly buffer lightClustersCount
+layout(UPDATE_FREQ_PER_FRAME, binding = 12) restrict readonly buffer lightClustersCount
 {
 	uint lightClustersCountBuffer[];
 };
 
-layout(set = 0, binding = 13) restrict readonly buffer lightClusters
+layout(UPDATE_FREQ_PER_FRAME, binding = 13) restrict readonly buffer lightClusters
 {
 	uint lightClustersBuffer[];
 };
 
 #if(SAMPLE_COUNT > 1)
-layout(set = 0, binding=14) uniform texture2DMS vbTex;
+layout(UPDATE_FREQ_NONE, binding=14) uniform texture2DMS vbTex;
 #else
-layout(set = 0, binding=14) uniform texture2D vbTex;
+layout(UPDATE_FREQ_NONE, binding=14) uniform texture2D vbTex;
 #endif
 
 #if USE_AMBIENT_OCCLUSION
-layout(set = 0, binding = 15) uniform texture2D aoTex;
+layout(UPDATE_FREQ_NONE, binding = 15) uniform texture2D aoTex;
 #endif
-layout(set = 0, binding = 16) uniform texture2D shadowMap;
+layout(UPDATE_FREQ_NONE, binding = 16) uniform texture2D shadowMap;
 
-layout(set = 0, binding = 17) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
-layout(set = 0, binding = 18 + MAX_TEXTURE_UNITS) uniform texture2D normalMaps[MAX_TEXTURE_UNITS];
-layout(set = 0, binding = 18 + MAX_TEXTURE_UNITS * 2) uniform texture2D specularMaps[MAX_TEXTURE_UNITS];
-
-
-layout(push_constant) uniform RootConstantDrawScene_Block
-{
-    vec4 lightColor;
-	uint lightingMode;
-	uint outputMode;
-	vec4 CameraPlane; //x : near, y : far
-}RootConstantDrawScene;
+layout(UPDATE_FREQ_NONE, binding = 17) uniform texture2D diffuseMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 18 + MAX_TEXTURE_UNITS) uniform texture2D normalMaps[MAX_TEXTURE_UNITS];
+layout(UPDATE_FREQ_NONE, binding = 18 + MAX_TEXTURE_UNITS * 2) uniform texture2D specularMaps[MAX_TEXTURE_UNITS];
 
 
 layout(location = 0) in vec2 iScreenPos;
@@ -313,21 +277,15 @@ void main()
 		// Apply perspective correction to texture coordinates
 		mat3x2 texCoords =
 		{
-#ifdef WINDOWS
 			unpack2Floats(vertexTexCoordData[index0]) * one_over_w[0],
 			unpack2Floats(vertexTexCoordData[index1]) * one_over_w[1],
 			unpack2Floats(vertexTexCoordData[index2]) * one_over_w[2]
-#elif defined(LINUX)
-			vertexTexCoordData[index0] * one_over_w[0],
-			vertexTexCoordData[index1] * one_over_w[1],
-			vertexTexCoordData[index2] * one_over_w[2]
-#endif
 		};
 
 		// Interpolate texture coordinates and calculate the gradients for texture sampling with mipmapping support
 		GradientInterpolationResults results = interpolateAttributeWithGradient(texCoords, derivativesOut.db_dx, derivativesOut.db_dy, d, uniformsData.twoOverRes);
 	
-        float linearZ = depthLinearization(z/w, RootConstantDrawScene.CameraPlane.x, RootConstantDrawScene.CameraPlane.y);
+        float linearZ = depthLinearization(z/w, uniformsData.CameraPlane.x, uniformsData.CameraPlane.y);
 	    float mip = pow(pow(linearZ, 0.9f) * 5.0f, 1.5f);
 	
 	    vec2 texCoordDX = results.dx * w * mip;
@@ -336,46 +294,22 @@ void main()
 
 		// NORMAL INTERPOLATION
 		// Apply perspective division to normals
-#ifdef LINUX
-		// Load normals
-		vec3 v0normal = vec3(vertexNormalData[index0].x, vertexNormalData[index0].y, vertexNormalData[index0].z);
-		vec3 v1normal = vec3(vertexNormalData[index1].x, vertexNormalData[index1].y, vertexNormalData[index1].z);
-		vec3 v2normal = vec3(vertexNormalData[index2].x, vertexNormalData[index2].y, vertexNormalData[index2].z);
-#endif
 		mat3x3 normals =
 		{
-#ifdef WINDOWS
 			decodeDir(unpackUnorm2x16(vertexNormalData[index0])) * one_over_w[0],
 			decodeDir(unpackUnorm2x16(vertexNormalData[index1])) * one_over_w[1],
 			decodeDir(unpackUnorm2x16(vertexNormalData[index2])) * one_over_w[2]
-#elif defined(LINUX)
-			v0normal * one_over_w[0],
-			v1normal * one_over_w[1],
-			v2normal * one_over_w[2]
-#endif
 		};
 
 		vec3 normal = normalize(interpolateAttribute(normals, derivativesOut.db_dx, derivativesOut.db_dy, d));
 
 		// TANGENT INTERPOLATION
 		// Apply perspective division to tangents
-#ifdef LINUX
-		// Load tangents
-		vec3 v0tan = vec3(vertexTangentData[index0].x, vertexTangentData[index0].y, vertexTangentData[index0].z);
-		vec3 v1tan = vec3(vertexTangentData[index1].x, vertexTangentData[index1].y, vertexTangentData[index1].z);
-		vec3 v2tan = vec3(vertexTangentData[index2].x, vertexTangentData[index2].y, vertexTangentData[index2].z);
-#endif
 		mat3x3 tangents =
 		{
-#ifdef WINDOWS
 			decodeDir(unpackUnorm2x16(vertexTangentData[index0])) * one_over_w[0],
 			decodeDir(unpackUnorm2x16(vertexTangentData[index1])) * one_over_w[1],
 			decodeDir(unpackUnorm2x16(vertexTangentData[index2])) * one_over_w[2]
-#elif defined(LINUX)
-			v0tan * one_over_w[0],
-			v1tan * one_over_w[1],
-			v2tan * one_over_w[2]
-#endif
 		};
 
 		vec3 tangent = normalize(interpolateAttribute(tangents, derivativesOut.db_dx, derivativesOut.db_dy, d));
@@ -460,7 +394,7 @@ break;
 	
 	float shadowFactor = 1.0f;
 
-	float fLightingMode = clamp(float(RootConstantDrawScene.lightingMode), 0.0, 1.0);
+	float fLightingMode = clamp(float(uniformsData.lightingMode), 0.0, 1.0);
 
 	shadedColor = calculateIllumination(
 		    normal,
@@ -484,7 +418,7 @@ break;
 			fLightingMode,
 			shadowFactor);
 
-	shadedColor = shadedColor * RootConstantDrawScene.lightColor.rgb * RootConstantDrawScene.lightColor.a * NoL * ao;
+	shadedColor = shadedColor * uniformsData.lightColor.rgb * uniformsData.lightColor.a * NoL * ao;
 
 		// Find the light cluster for the current pixel
 		uvec2 clusterCoords = uvec2(floor((iScreenPos * 0.5f + 0.5f) * uvec2(LIGHT_CLUSTER_WIDTH, LIGHT_CLUSTER_HEIGHT)));

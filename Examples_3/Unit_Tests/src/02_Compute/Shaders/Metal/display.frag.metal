@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -30,9 +30,15 @@ struct PsIn {
 	float2 texCoord;
 };
 
-fragment float4 stageMain(PsIn In [[stage_in]],
-                          texture2d<float> uTex0 [[texture(0)]],
-                          sampler uSampler0 [[sampler(0)]])
+struct FSData {
+    texture2d<float> uTex0      [[texture(0)]];
+    sampler uSampler0           [[sampler(0)]];
+};
+
+fragment float4 stageMain(
+    PsIn In [[stage_in]],
+    constant FSData& fsData [[buffer(UPDATE_FREQ_NONE)]]
+)
 {
-	return uTex0.sample(uSampler0, In.texCoord);
+	return fsData.uTex0.sample(fsData.uSampler0, In.texCoord);
 }

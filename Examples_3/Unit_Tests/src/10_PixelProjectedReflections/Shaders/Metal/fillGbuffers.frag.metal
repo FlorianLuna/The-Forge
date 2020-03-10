@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -40,12 +40,14 @@ struct ObjectData
 };
 
 struct TextureIndices {
-	uint albedoMap;
-	uint normalMap;
-	uint metallicMap;
-	uint roughnessMap;
-	uint aoMap;
+	uint textureMapIds;
 };
+
+#define albedoMap     ((cbTextureRootConstants.textureMapIds >> 0) & 0xFF)
+#define normalMap     ((cbTextureRootConstants.textureMapIds >> 8) & 0xFF)
+#define metallicMap   ((cbTextureRootConstants.textureMapIds >> 16) & 0xFF)
+#define roughnessMap  ((cbTextureRootConstants.textureMapIds >> 24) & 0xFF)
+#define aoMap         (5)
 
 float3 reconstructNormal(float4 sampleNormal)
 {
@@ -62,9 +64,9 @@ float3 reconstructNormal(float4 sampleNormal)
 	return tangentNormal;
 }
 
-float3 getNormalFromMap( texture2d<float> normalMap, sampler defaultSampler, float2 uv, float3 pos, float3 normal)
+float3 getNormalFromMap( texture2d<float> normalMapTex, sampler defaultSampler, float2 uv, float3 pos, float3 normal)
 {
-    float3 tangentNormal = reconstructNormal(normalMap.sample(defaultSampler,uv));
+    float3 tangentNormal = reconstructNormal(normalMapTex.sample(defaultSampler,uv));
 
     float3 Q1 = dfdx(pos);
     float3 Q2 = dfdy(pos);
@@ -96,18 +98,31 @@ struct PSOut
     float4 specular [[color(2)]];
 };
 
+struct FSData {
+    sampler defaultSampler                          [[id(0)]];
+    const array<texture2d<float>, 84> textureMaps;
+};
 
-fragment PSOut stageMain(PsIn In [[stage_in]],
-						  constant CameraData& cbCamera [[buffer(1)]],
-						  constant ObjectData& cbObject [[buffer(2)]],
-						  constant TextureIndices& cbTextureRootConstants [[buffer(3)]],
-						  const array<texture2d<float>, 84> textureMaps [[texture(0)]],
-						  sampler defaultSampler [[sampler(0)]])
-{	
+struct FSDataPerFrame {
+    constant CameraData& cbCamera                   [[id(0)]];
+};
+
+struct FSDataPerDraw {
+    constant ObjectData& cbObject                   [[id(0)]];
+};
+
+fragment PSOut stageMain(
+    PsIn In                                             [[stage_in]],
+    constant FSData& fsData                             [[buffer(UPDATE_FREQ_NONE)]],
+    constant FSDataPerFrame& fsDataPerFrame             [[buffer(UPDATE_FREQ_PER_FRAME)]],
+    constant FSDataPerDraw& fsDataPerDraw               [[buffer(UPDATE_FREQ_PER_DRAW)]],
+    constant TextureIndices& cbTextureRootConstants     [[buffer(UPDATE_FREQ_USER)]]
+)
+{
 	PSOut Out;
 
 	//cut off	
-	float alpha = textureMaps[cbTextureRootConstants.albedoMap].sample(defaultSampler, In.uv, 0.0).a;
+	float alpha = fsData.textureMaps[albedoMap].sample(fsData.defaultSampler, In.uv, 0.0).a;
 
 	if(alpha <= 0.5)
 		discard_fragment();
@@ -115,24 +130,24 @@ fragment PSOut stageMain(PsIn In [[stage_in]],
 	// default albedo 
 	float3 albedo = float3(0.5f, 0.0f, 0.0f);
 
-	float _roughness = cbObject.roughness;
-	float _metalness = cbObject.metalness;
+	float _roughness = fsDataPerDraw.cbObject.roughness;
+	float _metalness = fsDataPerDraw.cbObject.metalness;
 	float ao = 1.0f;
 
 	float3 N = normalize(In.normal);
 	
 
 	//this means pbr materials is set for these so sample from textures
-	if(cbObject.pbrMaterials!=-1) {
-        N = getNormalFromMap(textureMaps[cbTextureRootConstants.normalMap], defaultSampler, In.uv, In.pos, N);
-        float3 val = textureMaps[cbTextureRootConstants.albedoMap].sample(defaultSampler, In.uv,0.0).rgb;
+	if(fsDataPerDraw.cbObject.pbrMaterials!=-1) {
+        N = getNormalFromMap(fsData.textureMaps[normalMap], fsData.defaultSampler, In.uv, In.pos, N);
+        float3 val = fsData.textureMaps[albedoMap].sample(fsData.defaultSampler, In.uv,0.0).rgb;
         albedo = float3(pow(val.x,2.2f),pow(val.y,2.2f),pow(val.z,2.2f));
-        _metalness   = textureMaps[cbTextureRootConstants.metallicMap].sample(defaultSampler, In.uv).r;
-        _roughness = textureMaps[cbTextureRootConstants.roughnessMap].sample(defaultSampler, In.uv).r;
-        ao =   textureMaps[cbTextureRootConstants.aoMap].sample(defaultSampler, In.uv).r ;
+        _metalness   = fsData.textureMaps[metallicMap].sample(fsData.defaultSampler, In.uv).r;
+        _roughness = fsData.textureMaps[roughnessMap].sample(fsData.defaultSampler, In.uv).r;
+        ao =   fsData.textureMaps[aoMap].sample(fsData.defaultSampler, In.uv).r ;
 	}
 
-	if(cbObject.pbrMaterials==2) {
+	if(fsDataPerDraw.cbObject.pbrMaterials==2) {
 		albedo  = float3(0.7f, 0.7f, 0.7f);
 		ao = 1.0f;
 	}

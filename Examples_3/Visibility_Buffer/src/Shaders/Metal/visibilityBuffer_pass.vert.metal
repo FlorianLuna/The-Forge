@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of TheForge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -29,16 +29,8 @@ using namespace metal;
 
 #include "shader_defs.h"
 
-struct PackedVertexPosData {
-    packed_float3 position;
-};
-
-struct PackedVertexTexcoord {
-    packed_float2 texCoord;
-};
-
 struct VSOutput {
-	float4 position [[position]];
+    float4 position [[position]];
 };
 
 struct PerBatchUniforms {
@@ -56,16 +48,20 @@ struct IndirectDrawArguments
 
 struct VSInput
 {
-	float4 Position [[attribute(0)]];
+    float4 Position [[attribute(0)]];
+};
+
+struct VSData {
+    constant PerFrameConstants& uniforms;
 };
 
 // Vertex shader
 vertex VSOutput stageMain(
-                          VSInput input                                    [[stage_in]],
-                          constant PerFrameConstants& uniforms             [[buffer(2)]]
+    VSInput input                           [[stage_in]],
+    constant PerFrameConstants& uniforms    [[buffer(UNIT_VBPASS_UNIFORMS)]]
 )
 {
-	VSOutput result;
-	result.position = uniforms.transform[VIEW_CAMERA].mvp * input.Position;
-	return result;
+    VSOutput result;
+    result.position = uniforms.transform[VIEW_CAMERA].mvp * input.Position;
+    return result;
 }

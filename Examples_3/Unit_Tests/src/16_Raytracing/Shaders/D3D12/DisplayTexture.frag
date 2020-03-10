@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,7 +28,7 @@ struct PsIn {
 	float2 texCoord: TEXCOORD;
 };
 
-Texture2D uTex0 : register(t0);
+Texture2D uTex0 : register(t0, space1);
 SamplerState uSampler0 : register(s1);
 
 float4 main(PsIn In) : SV_Target

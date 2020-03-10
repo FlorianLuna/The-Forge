@@ -2,7 +2,7 @@
 <CodeLite_Project Name="Renderer" InternalType="Library" Version="10.0.0">
   <Plugins>
     <Plugin Name="qmake">
-      <![CDATA[00010001N0005Debug000000000000]]>
+      <![CDATA[00020001N0005Debug0000000000000001N0007Release000000000000]]>
     </Plugin>
   </Plugins>
   <Description/>
@@ -12,25 +12,14 @@
       <File Name="../../../../Common_3/OS/Image/Image.cpp"/>
       <File Name="../../../../Common_3/OS/Image/Image.h"/>
       <File Name="../../../../Common_3/OS/Image/ImageEnums.h"/>
-    </VirtualDirectory>
-    <VirtualDirectory Name="Profiler">
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerUI.h"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerUI.cpp"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerInput.cpp"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerHTML.h"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerDraw.cpp"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerBase.h"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/ProfilerBase.cpp"/>
-      <File Name="../../../../Common_3/ThirdParty/OpenSource/MicroProfile/Profiler.cpp"/>
-      <File Name="../../../../Common_3/Renderer/GpuProfiler.h"/>
-      <File Name="../../../../Common_3/Renderer/GpuProfiler.cpp"/>
+      <File Name="../../../../Common_3/ThirdParty/OpenSource/basis_universal/transcoder/basisu_transcoder.cpp"/>
     </VirtualDirectory>
     <File Name="../../../../Common_3/Renderer/CommonShaderReflection.cpp"/>
     <File Name="../../../../Common_3/Renderer/IMemoryAllocator.h"/>
     <File Name="../../../../Common_3/Renderer/IRenderer.h"/>
     <File Name="../../../../Common_3/Renderer/IShaderReflection.h"/>
     <File Name="../../../../Common_3/Renderer/ResourceLoader.cpp"/>
-    <File Name="../../../../Common_3/Renderer/ResourceLoader.h"/>
+    <File Name="../../../../Common_3/Renderer/IResourceLoader.h"/>
   </VirtualDirectory>
   <VirtualDirectory Name="Vulkan">
     <File Name="../../../../Common_3/Renderer/Vulkan/Vulkan.cpp"/>

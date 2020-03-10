@@ -1,7 +1,7 @@
 #version 450 core
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,10 +28,10 @@
 
 layout(vertices = 1) out;
 
-layout(set = 0, binding = 0) uniform GrassUniformBlock {
-
-  	mat4 world;
-	mat4 view;	
+layout(UPDATE_FREQ_PER_FRAME, binding = 0) uniform GrassUniformBlock
+{
+	mat4 world;
+	mat4 view;
 	mat4 invView;
 	mat4 proj;
 	mat4 viewProj;

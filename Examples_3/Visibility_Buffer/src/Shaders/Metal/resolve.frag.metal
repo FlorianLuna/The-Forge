@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of TheForge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -32,14 +32,20 @@ struct PsIn
     float4 position [[position]];
 };
 
-fragment float4 stageMain(PsIn In                                       [[stage_in]],
-                          texture2d_ms<float,access::read> msaaSource   [[texture(0)]])
+struct FSData {
+    texture2d_ms<float,access::read> msaaSource;
+};
+
+fragment float4 stageMain(
+    PsIn In                                       [[stage_in]],
+    constant FSData& fsData                     [[buffer(UPDATE_FREQ_NONE)]]
+)
 {
     float4 value = 0;
     
     uint2 texCoord = uint2(In.position.xy);
     for(int i = 0; i < SAMPLE_COUNT; ++i)
-        value += msaaSource.read(texCoord, i);
+        value += fsData.msaaSource.read(texCoord, i);
     value /= SAMPLE_COUNT;
     
     return value;

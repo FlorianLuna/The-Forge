@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -24,12 +24,12 @@
 
 #include "shader_defs.h"
 
-StructuredBuffer<UncompactedDrawArguments> uncompactedDrawArgs[NUM_CULLING_VIEWPORTS] : register(UNIT_UNCOMPACTED_ARGS);
-StructuredBuffer<uint> materialProps : register(UNIT_MATERIAL_PROPS);
+StructuredBuffer<UncompactedDrawArguments> uncompactedDrawArgs[NUM_CULLING_VIEWPORTS] : UNIT_UNCOMPACTED_ARGS;
+StructuredBuffer<uint> materialProps : UNIT_MATERIAL_PROPS;
 
-RWStructuredBuffer<uint> indirectMaterialBuffer : register(UNIT_INDIRECT_MATERIAL_RW);
-RWStructuredBuffer<uint> indirectDrawArgsBufferAlpha[NUM_CULLING_VIEWPORTS] : register(UNIT_INDIRECT_DRAW_ARGS_ALPHA_RW);
-RWStructuredBuffer<uint> indirectDrawArgsBufferNoAlpha[NUM_CULLING_VIEWPORTS] : register(UNIT_INDIRECT_DRAW_ARGS_RW);
+RWStructuredBuffer<uint> indirectMaterialBuffer : UNIT_INDIRECT_MATERIAL_RW;
+RWStructuredBuffer<uint> indirectDrawArgsBufferAlpha[NUM_CULLING_VIEWPORTS] : UNIT_INDIRECT_DRAW_ARGS_ALPHA_RW;
+RWStructuredBuffer<uint> indirectDrawArgsBufferNoAlpha[NUM_CULLING_VIEWPORTS] : UNIT_INDIRECT_DRAW_ARGS_RW;
 
 [numthreads(CLEAR_THREAD_COUNT, 1, 1)]
 void main(uint3 threadID : SV_DispatchThreadID)

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -37,87 +37,25 @@ void outputLogString(const char* pszStr)
 	OutputDebugStringA("\n");
 }
 
-void _ErrorMsg(int line, const char* file, const char* string, ...)
-{
-	ASSERT(string);
-	//Eval the string
-	const unsigned BUFFER_SIZE = 65536;
-	char           buf[BUFFER_SIZE];
-	// put source code file name at the begin
-	sprintf_s(buf, BUFFER_SIZE, file);
-	// put line positoin in code
-	sprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), "(%d)\t", line);
-
-	va_list arglist;
-	va_start(arglist, string);
-	//  vsprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), string, arglist);
-	vsprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), string, arglist);
-	va_end(arglist);
-	OutputDebugStringA(buf);
-	OutputDebugStringA("\n");
-	MessageBoxA(NULL, buf, "Error", MB_OK | MB_ICONERROR);
-}
-
-void _WarningMsg(int line, const char* file, const char* string, ...)
-{
-	ASSERT(string);
-
-	//Eval the string
-	const unsigned BUFFER_SIZE = 65536;
-	char           buf[BUFFER_SIZE];
-
-	// put source code file name at the begin
-	sprintf_s(buf, BUFFER_SIZE, file);
-	// put line positoin in code
-	sprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), "(%d)\t", line);
-
-	va_list arglist;
-	va_start(arglist, string);
-	vsprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), string, arglist);
-	va_end(arglist);
-
-	OutputDebugStringA(buf);
-	OutputDebugStringA("\n");
-	MessageBoxA(NULL, buf, "Warning", MB_OK | MB_ICONWARNING);
-}
-
-void _InfoMsg(int line, const char* file, const char* string, ...)
-{
-	ASSERT(string);
-
-	//Eval the string
-	const unsigned BUFFER_SIZE = 65536;
-	char           buf[BUFFER_SIZE];
-
-	// put source code file name at the begin
-	sprintf_s(buf, BUFFER_SIZE, file);
-	// put line positoin in code
-	sprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), "(%d)\t", line);
-
-	va_list arglist;
-	va_start(arglist, string);
-	vsprintf_s(buf + strlen(buf), BUFFER_SIZE - strlen(buf), string, arglist);
-	va_end(arglist);
-
-	OutputDebugStringA(buf);
-	OutputDebugStringA("\n");
-	MessageBoxA(NULL, buf, "Info", MB_OK);
-}
-
-void _OutputDebugString(const char* str, ...)
+void _OutputDebugStringV(const char* str, va_list args)
 {
 #ifdef _DEBUG
-	const unsigned BUFFER_SIZE = 4096;
-	char           buf[BUFFER_SIZE];
+    const unsigned BUFFER_SIZE = 4096;
+    char           buf[BUFFER_SIZE];
 
-	va_list arglist;
-	va_start(arglist, str);
-	vsprintf_s(buf, BUFFER_SIZE, str, arglist);
-	va_end(arglist);
+    vsprintf_s(buf, BUFFER_SIZE, str, args);
 
 	OutputDebugStringA(buf);
 	OutputDebugStringA("\n");
 #endif
+}
+
+void _OutputDebugString(const char* str, ...)
+{
+	va_list arglist;
+	va_start(arglist, str);
+	_OutputDebugStringV(str, arglist);
+	va_end(arglist);
 }
 
 void _FailedAssert(const char* file, int line, const char* statement)

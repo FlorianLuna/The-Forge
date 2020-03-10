@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -27,8 +27,8 @@
 layout(location = 0) in vec4 UV;
 layout(location = 0) out vec4 FragColor;
 
-layout(set = 0, binding = 0) uniform texture2D Source;
-layout(set = 0, binding = 1) uniform sampler PointSampler;
+layout(UPDATE_FREQ_NONE, binding = 0) uniform texture2D Source;
+layout(UPDATE_FREQ_NONE, binding = 1) uniform sampler PointSampler;
 
 void main()
 {    

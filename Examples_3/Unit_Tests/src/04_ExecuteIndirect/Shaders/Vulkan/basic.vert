@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -43,7 +43,7 @@ struct InstanceData
 	uint _pad0[3];
 };
 
-layout (std430, set=0, binding=0) buffer instanceBuffer
+layout (std430, UPDATE_FREQ_PER_BATCH, binding=0) readonly buffer instanceBuffer
 {
 	InstanceData instances[];
 };

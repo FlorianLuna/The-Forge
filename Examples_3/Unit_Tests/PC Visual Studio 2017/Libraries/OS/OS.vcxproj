@@ -27,14 +27,22 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\..\..\..\..\Common_3\OS\Camera\FpsCameraController.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\OS\Camera\GuiCameraController.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\OS\Core\FileSystem.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\OS\Core\PlatformEvents.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\Camera\CameraController.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Core\ThreadSystem.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Core\Timer.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\FileSystemInternal.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\MemoryStream.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\SystemFileStream.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\SystemRun.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\ZipFileStream.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\FileSystem\ZipFileSystem.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Input\InputSystem.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\Profiler\GpuProfiler.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\Profiler\ProfilerBase.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\Profiler\ProfilerWidgetsUI.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsFileSystem.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsTime.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\basis_universal\transcoder\basisu_transcoder.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\EASTL\allocator_forge.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\EASTL\assert.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\EASTL\EAStdC\EAMemory.cpp" />
@@ -50,12 +58,7 @@
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imgui_draw.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imgui_widgets.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\Profiler.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerBase.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerDraw.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerInput.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerUI.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\TinyEXR\tinyexr.cpp" />
+    <ClCompile Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\zip\zip.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\AnimatedObject.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\Animation.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\Clip.cpp" />
@@ -63,9 +66,6 @@
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\ClipMask.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\Rig.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Animation\SkeletonBatcher.cpp" />
-    <ClCompile Include="..\..\..\..\..\Middleware_3\ECS\BaseComponent.cpp" />
-    <ClCompile Include="..\..\..\..\..\Middleware_3\ECS\ComponentRepresentation.cpp" />
-    <ClCompile Include="..\..\..\..\..\Middleware_3\ECS\EntityManager.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\Text\Fontstash.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\UI\ImguiGUIDriver.cpp" />
     <ClCompile Include="..\..\..\..\..\Middleware_3\UI\AppUI.cpp" />
@@ -74,30 +74,32 @@
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Core\GPUConfig.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Core\RingBuffer.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Core\ThreadSystem.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\FileSystem\FileSystemInternal.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\FileSystem\MemoryStream.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\FileSystem\SystemFileStream.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\FileSystem\ZipFileStream.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\FileSystem\ZipFileSystem.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Image\Image.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Image\ImageEnums.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\OS\Input\InputMappings.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\OS\Input\InputSystem.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IApp.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\ICameraController.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IFileSystem.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IInput.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\ILog.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IMemory.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IMiddleware.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IOperatingSystem.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IPlatformEvents.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IProfiler.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\IThread.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Interfaces\ITime.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Logging\Log.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\OS\Math\MathTypes.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\Profiler\GpuProfiler.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\Profiler\ProfilerBase.h" />
+    <ClInclude Include="..\..\..\..\..\Common_3\OS\Profiler\ProfilerHTML.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imconfig.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imgui.h" />
     <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\imgui\imgui_internal.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerBase.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerEnableMacro.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerHTML.h" />
-    <ClInclude Include="..\..\..\..\..\Common_3\ThirdParty\OpenSource\MicroProfile\ProfilerUI.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\AnimatedObject.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\Animation.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\Clip.h" />
@@ -105,9 +107,6 @@
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\ClipMask.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\Rig.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Animation\SkeletonBatcher.h" />
-    <ClInclude Include="..\..\..\..\..\Middleware_3\ECS\BaseComponent.h" />
-    <ClInclude Include="..\..\..\..\..\Middleware_3\ECS\ComponentRepresentation.h" />
-    <ClInclude Include="..\..\..\..\..\Middleware_3\ECS\EntityManager.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\Text\Fontstash.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\UI\AppUI.h" />
     <ClInclude Include="..\..\..\..\..\Middleware_3\UI\UIShaders.h" />
@@ -118,7 +117,6 @@
     <ClCompile Include="..\..\..\..\..\Common_3\OS\MemoryTracking\MemoryTracking.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsLog.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsBase.cpp" />
-    <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsFileSystem.cpp" />
     <ClCompile Include="..\..\..\..\..\Common_3\OS\Windows\WindowsThread.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -237,9 +235,8 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;VULKAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;VULKAN;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
@@ -250,10 +247,13 @@
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>
@@ -266,9 +266,8 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;DIRECT3D12;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;DIRECT3D12;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
@@ -279,10 +278,13 @@
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>
@@ -295,9 +297,8 @@
       </PrecompiledHeader>
       <WarningLevel>Level3</WarningLevel>
       <Optimization>Disabled</Optimization>
-      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;DIRECT3D11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>USE_MEMORY_TRACKING;_DEBUG;_WINDOWS;DIRECT3D11;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>
       </MultiProcessorCompilation>
@@ -309,10 +310,13 @@
       <EntryPointSymbol>mainCRTStartup</EntryPointSymbol>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Debug;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>
@@ -327,9 +331,8 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;VULKAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;VULKAN;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
@@ -342,10 +345,13 @@
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>
@@ -360,9 +366,8 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;DIRECT3D12;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;DIRECT3D12;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
@@ -375,10 +380,13 @@
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>
@@ -393,9 +401,8 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <PreprocessorDefinitions>NDEBUG;_WINDOWS;DIRECT3D11;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>
-      </AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;DIRECT3D11;_CRT_SECURE_NO_WARNINGS;_CRT_NONSTDC_NO_DEPRECATE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <TreatWarningAsError>true</TreatWarningAsError>
       <MultiProcessorCompilation>
       </MultiProcessorCompilation>
@@ -409,10 +416,13 @@
       <AdditionalOptions>/ENTRY:mainCRTStartup %(AdditionalOptions)</AdditionalOptions>
       <AdditionalLibraryDirectories>$(GLFW_DIR)\lib;$(VULKAN_SDK)\Lib</AdditionalLibraryDirectories>
       <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Link>
     <Lib>
       <AdditionalDependencies>
       </AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(ProjectDir)..\..\..\..\..\Common_3\ThirdParty\OpenSource\Libraries\Win64\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalOptions>/ignore:4099</AdditionalOptions>
     </Lib>
     <PostBuildEvent>
       <Command>

@@ -1,11 +1,7 @@
 #version 450 core
-#if !defined(WINDOWS) && !defined(ANDROID) && !defined(LINUX)
-#define WINDOWS 	// Assume windows if no platform define has been added to the shader
-#endif
-
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -35,17 +31,13 @@
 #include "shader_defs.h"
 #include "packing.h"
 
-layout (set = 0, binding = 0) uniform uniforms
+layout (UPDATE_FREQ_PER_FRAME, binding = 0) uniform uniforms
 {
 	PerFrameConstants uniformsData;
 };
 
 layout(location = 0) in vec3 iPosition;
-#ifdef WINDOWS
 layout(location = 1) in uint iTexCoord;
-#elif defined(LINUX)
-layout(location = 1) in vec2 iTexCoord;
-#endif
 
 layout(location = 0) out vec2 oTexCoord;
 layout(location = 1) out flat uint oDrawId;
@@ -54,10 +46,6 @@ void main()
 {
 	uint drawId = gl_DrawIDARB;
 	gl_Position = uniformsData.transform[VIEW_CAMERA].mvp * vec4(iPosition, 1);
-#ifdef WINDOWS
 	oTexCoord = unpack2Floats(iTexCoord);
-#elif defined(LINUX)
-	oTexCoord = iTexCoord;
-#endif
 	oDrawId = drawId;
 }

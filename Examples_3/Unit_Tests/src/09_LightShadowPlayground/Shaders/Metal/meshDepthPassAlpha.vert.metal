@@ -1,6 +1,6 @@
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of TheForge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -28,14 +28,6 @@ using namespace metal;
 
 #include "Shader_Defs.h"
 
-struct PackedVertexPosData {
-	packed_float3 position;
-};
-
-struct PackedVertexTexcoord {
-	packed_float2 texCoord;
-};
-
 struct PsIn {
 	float4 Position [[position]];
 	float2 TexCoord;
@@ -57,7 +49,7 @@ struct IndirectDrawArguments
 struct VSInput
 {
 	float4 Position [[attribute(0)]];
-	float2 TexCoord [[attribute(1)]];
+	half2 TexCoord [[attribute(1)]];
 };
 
 struct Uniforms_objectUniformBlock
@@ -65,13 +57,18 @@ struct Uniforms_objectUniformBlock
 	float4x4 WorldViewProjMat;
 	float4x4 WorldMat;
 };
+
+struct VSData {
+    constant Uniforms_objectUniformBlock& objectUniformBlock             [[id(0)]];
+};
+
 vertex PsIn stageMain(
-					   VSInput input [[stage_in]],
-					   constant Uniforms_objectUniformBlock & objectUniformBlock             [[buffer(2)]]
-					   )
+    VSInput input               [[stage_in]],
+    constant VSData& vsData     [[buffer(UPDATE_FREQ_PER_DRAW)]]
+)
 {
 	PsIn output;
-	output.Position = objectUniformBlock.WorldViewProjMat * input.Position;
-	output.TexCoord = input.TexCoord;
+	output.Position = vsData.objectUniformBlock.WorldViewProjMat * input.Position;
+	output.TexCoord = float2(input.TexCoord);
 	return output;
 }

@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -29,19 +29,16 @@
 #include "../../Common_3/OS/Interfaces/IMiddleware.h"
 #include "../../Common_3/OS/Interfaces/IFileSystem.h"
 
-extern FSRoot FSR_MIDDLEWARE_PANINI;
+extern ResourceDirectory RD_MIDDLEWARE_PANINI;
 
 // forward decls
 struct Texture;
-struct GpuProfiler;
 struct Buffer;
 struct Shader;
 struct RootSignature;
 struct Pipeline;
 struct Sampler;
-struct DepthState;
-struct RasterizerState;
-struct DescriptorBinder;
+struct DescriptorSet;
 
 /************************************************************************/
 /*					   HOW TO USE THIS MODULE
@@ -101,7 +98,7 @@ struct PaniniParameters
 *************************************************************************/
 class Panini: public IMiddleware
 {
-	public:
+public:
 	// our init function should only be called once
 	// the middleware has to keep these pointers
 	bool Init(Renderer* renderer);
@@ -115,33 +112,33 @@ class Panini: public IMiddleware
 	void Unload();
 
 	// draws Panini Projection into first render target supplied at the Load call
-	void Update(float deltaTime) {}
+	void Update(float deltaTime);
 	void Draw(Cmd* cmd);
 
 	// Allocates descriptor memory
-	void SetDescriptorBinder(uint32_t maxSourceTextureUpdatesPerFrame);
+	void SetMaxDraws(uint32_t maxDraws);
+
 	// Set input texture to sample from
-	void SetSourceTexture(Texture* pTex);
+	void SetSourceTexture(Texture* pTex, uint32_t index);
 	// Sets the parameters to be sent to the panini projection shader
 	void SetParams(const PaniniParameters& params) { mParams = params; }
 
-	private:
-	Renderer* pRenderer;
-	Texture*  pSourceTexture = NULL;
+private:
+	Renderer*         pRenderer;
 
-	Shader*           pShaderPanini = NULL;
-	RootSignature*    pRootSignaturePaniniPostProcess = NULL;
-	DescriptorBinder* pDescriptorBinderPaniniPostProcess = NULL;
+	Shader*           pShader = NULL;
+	RootSignature*    pRootSignature = NULL;
+	DescriptorSet*    pDescriptorSet = NULL;
 	Sampler*          pSamplerPointWrap = NULL;
-	DepthState*       pDepthStateDisable = NULL;
-	RasterizerState*  pRasterizerStateCullNone = NULL;
-	Pipeline*         pPipelinePaniniPostProcess = NULL;
+	Pipeline*         pPipeline = NULL;
 
-	Buffer* pVertexBufferTessellatedQuad = NULL;
-	Buffer* pIndexBufferTessellatedQuad = NULL;
+	Buffer*           pVertexBufferTessellatedQuad = NULL;
+	Buffer*           pIndexBufferTessellatedQuad = NULL;
 
-	PaniniParameters mParams;
+	PaniniParameters  mParams;
+	uint32_t          mIndex;
+	uint32_t          mMaxDraws;
 
 	// Panini projection renders into a tessellated rectangle which imitates a curved cylinder surface
-	const unsigned mPaniniDistortionTessellation[2] = { 64, 32 };
+	const uint32_t    mPaniniDistortionTessellation[2] = { 64, 32 };
 };

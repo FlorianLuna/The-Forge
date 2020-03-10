@@ -11,7 +11,12 @@
 *.bak
 /Debug
 /Release
+/DebugTest
+/ReleaseTest
 *.log
 *.sdf
 *.opensdf
 /build
+x64_*
+x86_*
+UI/HLSLParser/packages/*

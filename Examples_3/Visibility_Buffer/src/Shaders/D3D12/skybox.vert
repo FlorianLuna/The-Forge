@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -24,7 +24,8 @@
 
 
 
-cbuffer RootConstantCameraSky : register(b0) {
+cbuffer UniformCameraSky : register(b0, UPDATE_FREQ_PER_FRAME)
+{
 	float4x4 projView;
 	float3 camPos;
 }

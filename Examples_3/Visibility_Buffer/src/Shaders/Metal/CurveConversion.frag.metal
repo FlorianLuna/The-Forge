@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  *
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -47,17 +47,20 @@ struct Fragment_Shader
 	SceneTex(SceneTex),uSampler0(uSampler0),GodRayTex(GodRayTex) {}
 };
 
+struct FSData {
+    texture2d<float> SceneTex   [[id(0)]];
+    sampler uSampler0           [[id(1)]];
+    texture2d<float> GodRayTex  [[id(2)]];
+};
 
-fragment float4 stageMain( Fragment_Shader::PsIn In [[stage_in]],
-						  texture2d<float> SceneTex [[texture(0)]],
-						  sampler uSampler0 [[sampler(0)]],
-						  texture2d<float> GodRayTex [[texture(1)]])
+fragment float4 stageMain(
+    Fragment_Shader::PsIn In [[stage_in]],
+    constant FSData& fsData [[buffer(UPDATE_FREQ_NONE)]]
+)
 {
 	Fragment_Shader::PsIn In0;
 	In0.position = float4(In.position.xyz, 1.0 / In.position.w);
 	In0.texCoord = In.texCoord;
-	Fragment_Shader main(SceneTex,
-						 uSampler0,
-						 GodRayTex);
+	Fragment_Shader main(fsData.SceneTex, fsData.uSampler0, fsData.GodRayTex);
 	return main.main(In0);
 }

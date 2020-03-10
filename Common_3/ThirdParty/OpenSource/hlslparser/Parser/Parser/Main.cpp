@@ -1,12 +1,27 @@
 #include "Parser.h"
+#include "Engine.h"
+
+#include <fstream>
+#include <sstream>
 #include <direct.h> // for _mkdir
 
-std::string ReadFile(const char* fileName)
+
+#include <string>
+#include <vector>
+
+#include "../../../EASTL/vector.h"
+#include "../../../EASTL/string.h"
+
+#define NOMINMAX
+#include <Windows.h>
+
+
+eastl::string ReadFile(const char* fileName)
 {
 	std::ifstream ifs(fileName);
 	std::stringstream buffer;
 	buffer << ifs.rdbuf();
-	return buffer.str();
+	return eastl::string(buffer.str().c_str());
 }
 
 bool WriteFile(const char* fileName, const char* contents)
@@ -15,22 +30,20 @@ bool WriteFile(const char* fileName, const char* contents)
 	//And make directory	
 
 	size_t found;
-	std::string FilenameStr(fileName);
+	eastl::string FilenameStr(fileName);
 	found = FilenameStr.find_last_of("/\\");
-	std::string DirnameStr = FilenameStr.substr(0, found);
+	eastl::string DirnameStr = FilenameStr.substr(0, found);
 
 	_mkdir(DirnameStr.c_str());
 
-
-
 	std::ofstream ofs(fileName);
-	
+
 	ofs << contents;
 	ofs.close();
 	return true;
 }
 
-
+#if 0
 const char* getIncludeFiles(char newDirPath[], const char* pIncludedFileName[MAX_INCLUDE_FILE+1], int *pIncludedCounter, const char* pIncluded[MAX_INCLUDE_FILE], std::string originFile)
 {	
 	char toCstr[65536];
@@ -123,184 +136,220 @@ void removeIncludedFiles(int includedCounter, const char* pIncluded[MAX_INCLUDE_
 		delete[] pIncluded[i];
 	}
 }
+#endif
 
-int main( int argc, char* argv[] )
+extern int ParserTest();
+
+int ParserMain( int argc, char* argv[] )
 {
 	//using namespace M4;
-
+#ifdef TEST_PARSER
+	return ParserTest();
+#else
 	// Parse arguments
-	const char* fileName = NULL;
 	const char* entryName = NULL;
-	const char* shader = NULL;
-	const char* _language = NULL;
 	const char* outputFile = NULL;
+	const char* srcFile = NULL;
 
 	//for hull shader in Metal
-	const char* secondaryfileName = NULL;
-	const char* secondaryentryName = NULL;
+	eastl::string source;
 
-	Target target = Target_VertexShader;
-	Language language = Language_GLSL;
+	Parser::Target target = Parser::Target_Num;
+	Parser::Language language = Parser::Language_Num;
 
-	Parser parser;
+	eastl::string StageName;
+ 
+	bool error = false;
 
+	eastl::vector < BindingShift > bindingShift;
 
-	
-
-	if (String_Equal(argv[1], "-fs"))
+	int i = 1;
+	while (i < argc)
 	{
-		shader = argv[1];
+		if (String_Equal(argv[i], "-fs"))
+		{
+			target = Parser::Target_FragmentShader;
+			StageName.append("frag");
+		}
+		else if (String_Equal(argv[i], "-vs"))
+		{
+			target = Parser::Target_VertexShader;
+			StageName.append("vert");
+		}
+		else if (String_Equal(argv[i], "-hs"))
+		{
+			target = Parser::Target_HullShader;
+			StageName.append("tesc");
+		}
+		else if (String_Equal(argv[i], "-ds"))
+		{
+			target = Parser::Target_DomainShader;
+			StageName.append("tese");
+		}
+		else if (String_Equal(argv[i], "-gs"))
+		{
+			target = Parser::Target_GeometryShader;
+			StageName.append("geom");
+		}
+		else if (String_Equal(argv[i], "-cs"))
+		{
+			target = Parser::Target_ComputeShader;
+			StageName.append("comp");
+		}
+		else if (String_Equal(argv[i], "-glsl"))
+		{
+			language = Parser::Language_GLSL;
+		}
+		else if (String_Equal(argv[i], "-hlsl"))
+		{
+			language = Parser::Language_HLSL;
+		}
+		else if (String_Equal(argv[i], "-legacyhlsl"))
+		{
+			// not really supported
+			language = Parser::Language_HLSL;
+		}
+		else if (String_Equal(argv[i], "-msl"))
+		{
+			language = Parser::Language_MSL;
+		}
+#ifdef GENERATE_ORBIS
+		else if (String_Equal(argv[i], "-orbis"))
+		{
+			language = Parser::Language_ORBIS;
+		}
+#endif
+		else if (String_Equal(argv[i], "-Fo"))
+		{
+			if (i+1 < argc)
+			{
+				outputFile = argv[++i];
+			}
+			else
+			{
+				break;
+			}
+		}
+		else if (String_Equal(argv[i], "-E"))
+		{
+			if (i+1 < argc)
+			{
+				entryName = argv[++i];
+			}
+			else
+			{
+				break;
+			}
+		}
+		else if (String_Equal(argv[i], "-fvk-b-shift"))
+		{
+			if (i+2 < argc)
+			{
+				int shift = atoi(argv[++i]);
+				int space = atoi(argv[++i]);
+				bindingShift.push_back(BindingShift{'b', space, shift});
+			}
+			else
+			{
+				break;
+			}
+		}
+		else if (String_Equal(argv[i], "-fvk-s-shift"))
+		{
+			if (i+2 < argc)
+			{
+				int shift = atoi(argv[++i]);
+				int space = atoi(argv[++i]);
+				bindingShift.push_back(BindingShift{'s', space, shift});
+			}
+			else
+			{
+				break;
+			}
+		}
+		else if (String_Equal(argv[i], "-fvk-t-shift"))
+		{
+			if (i+2 < argc)
+			{
+				int shift = atoi(argv[++i]);
+				int space = atoi(argv[++i]);
+				bindingShift.push_back(BindingShift{'t', space, shift});
+			}
+			else
+			{
+				break;
+			}
+		}
+		else if (String_Equal(argv[i], "-fvk-u-shift"))
+		{
+			if (i+2 < argc)
+			{
+				int shift = atoi(argv[++i]);
+				int space = atoi(argv[++i]);
+				bindingShift.push_back(BindingShift{'u', space, shift});
+			}
+			else
+			{
+				break;
+			}
+		}
+		else
+		{
+			if (!srcFile) srcFile = argv[i];
+			source = source + ReadFile(argv[i]);
+		}
+		++i;
 	}
-	else if (String_Equal(argv[1], "-vs"))
+
+	Parser::Options options;
+	Parser::ParsedData parsedData;
+
+	if (source.empty())
 	{
-		shader = argv[1];
+		printf("Nothing to parse\n");
+		return 1;
 	}
-	else if (String_Equal(argv[1], "-hs"))
+
+	if (language>=Parser::Language_Num || StageName.empty() || !outputFile || !entryName)
 	{
-		shader = argv[1];
-	}
-	else if (String_Equal(argv[1], "-ds"))
-	{
-		shader = argv[1];
-	}
-	else if (String_Equal(argv[1], "-gs"))
-	{
-		shader = argv[1];
-	}
-	else if (String_Equal(argv[1], "-cs"))
-	{
-		shader = argv[1];
+		printf("Invalid command line");
+		return 1;
 	}
 
-	if (String_Equal(argv[2], "-glsl"))
-	{
-		_language = argv[2];
-	}
-	else if (String_Equal(argv[2], "-hlsl"))
-	{
-		_language = argv[2];
-	}
-	else if (String_Equal(argv[2], "-legacyhlsl"))
-	{
-		_language = argv[2];
-	}
-	else if (String_Equal(argv[2], "-msl"))
-	{
-		_language = argv[2];
-	}
+	eastl::string dstPreprocName = "";//FileName + eastl::string("_") + StageName + eastl::string("_preproc.txt");
+	eastl::string dstTokenName = "";// dstDir + baseName + "_" + stage + "_token.txt";
+	eastl::string dstGeneratedName = outputFile;// dstDir + baseName + "." + stage;
+
+	options.mDebugPreprocEnable = false;
+	options.mDebugPreprocFile = dstPreprocName;
+	options.mDebugTokenEnable = false;
+	options.mDebugTokenFile = dstTokenName;
+	options.mGeneratedWriteEnable = true;
+	options.mGeneratedWriteFile = dstGeneratedName;
+	options.mLanguage = language;
+	options.mOperation = Parser::Operation_Generate;
+	options.mTarget = target;
+	options.mShiftVec = bindingShift;
 
 
-	if (fileName == NULL)
-	{
-		fileName = argv[3];
-	}
+	eastl::vector < eastl::string > macroLhs{"UPDATE_FREQ_NONE", "UPDATE_FREQ_PER_FRAME", "UPDATE_FREQ_PER_BATCH", "UPDATE_FREQ_PER_DRAW"};
+	eastl::vector < eastl::string > macroRhs{"space0", "space1", "space2", "space3"};
 
-	if (entryName == NULL)
-	{
-		entryName = argv[4];
-	}
-	
-	if (argc >= 5 && outputFile == NULL)
-	{
-		outputFile = argv[5];
-	}
+	Parser::ProcessFile(parsedData, srcFile, entryName, options, macroLhs, macroRhs);
+#endif
+}
 
-	if (argc >= 6 && secondaryfileName == NULL)
-	{
-		secondaryfileName = argv[6];
-	}
+int main(int argc, char** argv)
+{
+	extern bool MemAllocInit();
+	extern void MemAllocExit();
 
-	if (argc >= 7 && secondaryentryName == NULL)
-	{
-		secondaryentryName = argv[7];
-	}
+	if (!MemAllocInit())
+		return EXIT_FAILURE;
 
+	int ret = ParserMain(argc, argv);
 
+	MemAllocExit();
 
-
-	// Read input file
-	std::string source = ReadFile(fileName);
-	
-	if (secondaryfileName)
-	{
-		std::string source2 = ReadFile(secondaryfileName);
-		source = source2.append(source);
-	}
-	
-
-
-	// Read included files
-	
-	char newDirPath[256];
-	char drive[16];
-	char dir[256];
-
-	_splitpath_s(fileName,
-		drive, sizeof(drive),
-		dir, sizeof(dir),    
-		NULL, 0,             // Don't need filename
-		NULL, 0);
-
-
-	strcpy(newDirPath, drive);
-	strcat(newDirPath, dir);
-
-
-	const char* pIncludedFileName[MAX_INCLUDE_FILE + 1];
-	const char* pIncluded[MAX_INCLUDE_FILE];
-	int includedCounter = 0;
-
-	
-	char toCstr[65536];
-	strcpy(toCstr, source.c_str());
-
-	size_t index = 0;
-	
-	char RESULT[65536];
-
-	const char* InlcudedResult = getIncludeFiles(newDirPath, pIncludedFileName, &includedCounter, pIncluded, source);
-	if (InlcudedResult)
-	{
-		strcpy(RESULT,"error) cannot find an include file ");
-		strcat(RESULT, InlcudedResult);
-	}
-	else
-	{
-		char* temp = new char[256];
-		strcpy(temp, fileName);
-		pIncludedFileName[includedCounter] = temp;
-		parser.ParserEntry(RESULT, pIncludedFileName, source.data(), source.size(), entryName, shader, _language, pIncluded, includedCounter);
-	}
-
-	removeIncludedFiles(includedCounter, pIncluded);
-
-	/*
-
-	char errorCheck[7];
-	errorCheck[0] = RESULT[0];
-	errorCheck[1] = RESULT[1];
-	errorCheck[2] = RESULT[2];
-	errorCheck[3] = RESULT[3];
-	errorCheck[4] = RESULT[4];
-	errorCheck[5] = RESULT[5];
-	errorCheck[6] = NULL;
-
-	*/
-
-	//if (String_Equal(errorCheck, "error)"))
-	//	return -1;
-	//else
-	//{	
-		//const char* header = "/*\n * Copyright (c) 2018-2019 Confetti Interactive Inc.\n * \n * This file is part of The-Forge\n * (see https://github.com/ConfettiFX/The-Forge). \n *\n * Licensed to the Apache Software Foundation (ASF) under one\n * or more contributor license agreements.  See the NOTICE file\n * distributed with this work for additional information\n * regarding copyright ownership.  The ASF licenses this file\n * to you under the Apache License, Version 2.0 (the\n * \"License\") you may not use this file except in compliance\n * with the License.  You may obtain a copy of the License at\n *\n *   http://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing,\n * software distributed under the License is distributed on an\n * \"AS IS\" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY\n * KIND, either express or implied.  See the License for the\n * specific language governing permissions and limitations\n * under the License.\n*/\n";
-		
-		char RESULT2[65536];
-		//strcpy(RESULT2, header);
-		//strcat(RESULT2, RESULT);
-		strcpy(RESULT2, RESULT);
-
-		if(outputFile)
-			WriteFile(outputFile, RESULT2);
-		
-		return 0;
-	//}	
+	return ret;
 }

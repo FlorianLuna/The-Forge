@@ -1,6 +1,6 @@
 /*
 *
-* Copyright (c) 2018-2019 Confetti Interactive Inc.
+* Copyright (c) 2018-2020 The Forge Interactive Inc.
 *
 * This file is part of The-Forge
 * (see https://github.com/ConfettiFX/The-Forge).
@@ -32,13 +32,10 @@
 *
 *********************************************************************************************************/
 
-//asimp importer
-#include "../../../../Common_3/Tools/AssimpImporter/AssimpImporter.h"
-#include "../../../../Common_3/Tools/TFXImporter/TFXImporter.h"
-
 //tiny stl
 #include "../../../../Common_3/ThirdParty/OpenSource/EASTL/vector.h"
 #include "../../../../Common_3/ThirdParty/OpenSource/EASTL/string.h"
+#include "../../../../Common_3/ThirdParty/OpenSource/EASTL/unordered_map.h"
 
 //Interfaces
 #include "../../../../Common_3/OS/Interfaces/ICameraController.h"
@@ -47,17 +44,15 @@
 #include "../../../../Common_3/OS/Interfaces/ITime.h"
 #include "../../../../Middleware_3/UI/AppUI.h"
 #include "../../../../Common_3/Renderer/IRenderer.h"
-#include "../../../../Common_3/Renderer/ResourceLoader.h"
+#include "../../../../Common_3/Renderer/IResourceLoader.h"
 #include "../../../../Common_3/OS/Interfaces/IApp.h"
 #include "../../../../Common_3/OS/Interfaces/IProfiler.h"
+#include "../../../../Common_3/OS/Interfaces/IInput.h"
 
 //Math
 #include "../../../../Common_3/OS/Math/MathTypes.h"
 
 //input
-#include "../../../../Common_3/OS/Input/InputSystem.h"
-#include "../../../../Common_3/OS/Input/InputMappings.h"
-
 // Animations
 #undef min
 #undef max
@@ -74,26 +69,6 @@
 #include "../../../../Common_3/OS/Core/ThreadSystem.h"
 
 #include "../../../../Common_3/OS/Interfaces/IMemory.h"    // Must be the last include in a cpp file
-
-// define folders for resources
-const char* pszBases[FSR_Count] = {
-	"../../../src/06_MaterialPlayground/",    // FSR_BinShaders
-	"../../../src/06_MaterialPlayground/",    // FSR_SrcShaders
-	"../../../UnitTestResources/",            // FSR_Textures
-	"../../../UnitTestResources/",            // FSR_Meshes
-	"../../../UnitTestResources/",            // FSR_Builtin_Fonts
-	"../../../src/06_MaterialPlayground/",    // FSR_GpuConfig
-	"../../../UnitTestResources/",            // FSR_Animation
-	"",                                       // FSR_Audio
-	"../../../../../Art/",                    // FSR_OtherFiles
-	"../../../../../Middleware_3/Text/",      // FSR_MIDDLEWARE_TEXT
-	"../../../../../Middleware_3/UI/",        // FSR_MIDDLEWARE_UI
-#if defined(TARGET_IOS) || defined(_DURANGO) || defined(__ANDROID__)
-	"",    // FSR_Middleware2 //used to load lua scripts
-#else
-	"../../../src/06_MaterialPlayground/",    // FSR_Middleware2 //used to load lua scripts
-#endif
-};
 
 // Pre-processor switches
 #define MAX_NUM_POINT_LIGHTS 8          // >= 1
@@ -114,6 +89,7 @@ typedef enum EMaterialTypes
 	MATERIAL_METAL = 0,
 	MATERIAL_WOOD,
 	MATERIAL_HAIR,
+	MATERIAL_BRDF_COUNT = MATERIAL_HAIR,
 	MATERIAL_COUNT
 } MaterialType;
 
@@ -179,30 +155,13 @@ static const char* metalEnumNames[] = { "Aluminum", "Scratched Gold",
 										"Bronze",   NULL };
 static const char* woodEnumNames[] = { "Wooden Plank 05", "Wooden Plank 06", "Wood #03", "Wood #08", "Wood #16", "Wood #18", NULL };
 
-static const int MATERIAL_INSTANCE_COUNT = sizeof(metalEnumNames) / sizeof(metalEnumNames[0]) - 1;
+static const uint32_t MATERIAL_INSTANCE_COUNT = sizeof(metalEnumNames) / sizeof(metalEnumNames[0]) - 1;
 
 const uint32_t gImageCount = 3;
-bool           bToggleMicroProfiler = false;
-bool           bPrevToggleMicroProfiler = false;
-
+ProfileToken   gGpuProfileToken;
 //--------------------------------------------------------------------------------------------
 // STRUCT DEFINTIONS
 //--------------------------------------------------------------------------------------------
-struct Vertex
-{
-	float3 mPos;
-	float3 mNormal;
-	float2 mUv;
-};
-
-typedef struct MeshData
-{
-	Buffer* pVertexBuffer = NULL;
-	uint    mVertexCount = 0;
-	Buffer* pIndexBuffer = NULL;
-	uint    mIndexCount = 0;
-} MeshData;
-
 struct UniformCamData
 {
 	mat4 mProjectView;
@@ -367,7 +326,7 @@ struct UniformDataHairSimulation
 
 struct HairBuffer
 {
-	eastl::string           mName = NULL;
+	Geometry*                 pGeom = NULL;
 	Buffer*                   pBufferHairVertexPositions = NULL;
 	Buffer*                   pBufferHairVertexTangents = NULL;
 	Buffer*                   pBufferTriangleIndices = NULL;
@@ -456,6 +415,7 @@ Semaphore* pImageAcquiredSemaphore = NULL;
 Semaphore* pRenderCompleteSemaphores[gImageCount] = { NULL };
 uint32_t   gFrameIndex = 0;
 
+VertexLayout gVertexLayoutDefault = {};
 //--------------------------------------------------------------------------------------------
 // THE FORGE OBJECTS
 //--------------------------------------------------------------------------------------------
@@ -464,38 +424,13 @@ ICameraController* pCameraController = NULL;
 ICameraController* pLightView = NULL;
 TextDrawDesc       gFrameTimeDraw = TextDrawDesc(0, 0xff00ff00, 18);
 TextDrawDesc       gErrMsgDrawDesc = TextDrawDesc(0, 0xff0000ee, 18);
-GpuProfiler*       pGpuProfiler = NULL;
 GuiComponent*      pGuiWindowMain = NULL;
 GuiComponent*      pGuiWindowHairSimulation = NULL;
 GuiComponent*      pGuiWindowMaterial = NULL;
 LuaManager         gLuaManager;
 ThreadSystem*      pIOThreads = NULL;
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
 VirtualJoystickUI gVirtualJoystick;
-#endif
-
-//--------------------------------------------------------------------------------------------
-// RASTERIZER STATES
-//--------------------------------------------------------------------------------------------
-RasterizerState* pRasterizerStateCullNone = NULL;
-RasterizerState* pRasterizerStateCullFront = NULL;
-
-//--------------------------------------------------------------------------------------------
-// DEPTH STATES
-//--------------------------------------------------------------------------------------------
-DepthState* pDepthStateEnable = NULL;
-DepthState* pDepthStateDisable = NULL;
-DepthState* pDepthStateNoWrite = NULL;
-DepthState* pDepthStateDepthResolve = NULL;
-
-//--------------------------------------------------------------------------------------------
-// BLEND STATES
-//--------------------------------------------------------------------------------------------
-BlendState* pBlendStateAlphaBlend = NULL;
-BlendState* pBlendStateDepthPeeling = NULL;
-BlendState* pBlendStateAdd = NULL;
-BlendState* pBlendStateColorResolve = NULL;
 
 //--------------------------------------------------------------------------------------------
 // SAMPLERS
@@ -510,7 +445,7 @@ Sampler* pSamplerPoint = NULL;
 Shader* pShaderSkybox = NULL;
 Shader* pShaderBRDF = NULL;
 Shader* pShaderShadowPass = NULL;
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 Shader* pShaderHairClear = NULL;
 Shader* pShaderHairDepthPeeling = NULL;
 Shader* pShaderHairDepthResolve = NULL;
@@ -533,7 +468,7 @@ Shader* pShaderHairShadow = NULL;
 RootSignature* pRootSignatureSkybox = NULL;
 RootSignature* pRootSignatureBRDF = NULL;
 RootSignature* pRootSignatureShadowPass = NULL;
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 RootSignature* pRootSignatureHairClear = NULL;
 RootSignature* pRootSignatureHairDepthPeeling = NULL;
 RootSignature* pRootSignatureHairDepthResolve = NULL;
@@ -551,18 +486,34 @@ RootSignature* pRootSignatureHairShadow = NULL;
 #endif
 
 //--------------------------------------------------------------------------------------------
-// DESCRIPTOR BINDER
+// DESCRIPTOR SET
 //--------------------------------------------------------------------------------------------
-
-DescriptorBinder* pDescriptorBinder = NULL;
-
+DescriptorSet* pDescriptorSetShadow[2] = { NULL };
+DescriptorSet* pDescriptorSetSkybox[2] = { NULL };
+DescriptorSet* pDescriptorSetBRDF[3] = { NULL };
+#if !defined(DIRECT3D11)
+DescriptorSet* pDescriptorSetHairClear = { NULL };
+DescriptorSet* pDescriptorSetHairPreWarm = { NULL };
+DescriptorSet* pDescriptorSetHairIntegrate = { NULL };
+DescriptorSet* pDescriptorSetHairShockPropagate = { NULL };
+DescriptorSet* pDescriptorSetHairLocalConstraints = { NULL };
+DescriptorSet* pDescriptorSetHairLengthConstraints = { NULL };
+DescriptorSet* pDescriptorSetHairFollowHairs = { NULL };
+DescriptorSet* pDescriptorSetHairShadow[2] = { NULL };
+DescriptorSet* pDescriptorSetHairDepthPeeling[3] = { NULL };
+DescriptorSet* pDescriptorSetHairDepthResolve = { NULL };
+DescriptorSet* pDescriptorSetHairFillColors[4] = { NULL };
+DescriptorSet* pDescriptorSetHairColorResolve = { NULL };
+DescriptorSet* pDescriptorSetShowCapsule = { NULL };
+#endif
+uint32_t gHairDynamicDescriptorSetCount = 0;
 //--------------------------------------------------------------------------------------------
 // PIPELINES
 //--------------------------------------------------------------------------------------------
 Pipeline* pPipelineSkybox = NULL;
 Pipeline* pPipelineBRDF = NULL;
 Pipeline* pPipelineShadowPass = NULL;
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 Pipeline* pPipelineHairClear = NULL;
 Pipeline* pPipelineHairDepthPeeling = NULL;
 Pipeline* pPipelineHairDepthResolve = NULL;
@@ -597,7 +548,7 @@ Buffer* pBufferHairDepth = NULL;
 // VERTEX BUFFERS
 //--------------------------------------------------------------------------------------------
 Buffer*                     pVertexBufferSkybox = NULL;
-eastl::vector<HairBuffer> gHair;
+eastl::vector<HairBuffer>   gHair;
 Buffer*                     pVertexBufferSkeletonJoint = NULL;
 int                         gVertexCountSkeletonJoint = 0;
 Buffer*                     pVertexBufferSkeletonBone = NULL;
@@ -610,7 +561,7 @@ int                         gVertexCountSkeletonBone = 0;
 //--------------------------------------------------------------------------------------------
 // MESHES
 //--------------------------------------------------------------------------------------------
-eastl::vector<MeshData*> pMeshes;
+eastl::vector<Geometry*> gMeshes;
 
 //--------------------------------------------------------------------------------------------
 // UNIFORM BUFFERS
@@ -633,8 +584,8 @@ const int gMaterialTextureCount = MATERIAL_INSTANCE_COUNT * MATERIAL_TEXTURE_COU
 
 Texture*                  pTextureSkybox = NULL;
 Texture*                  pTextureBRDFIntegrationMap = NULL;
-eastl::vector<Texture*> pTextureMaterialMaps;          // objects
-eastl::vector<Texture*> pTextureMaterialMapsGround;    // ground
+eastl::vector<Texture*>   gTextureMaterialMaps;          // objects
+eastl::vector<Texture*>   gTextureMaterialMapsGround;    // ground
 
 Texture* pTextureIrradianceMap = NULL;
 Texture* pTextureSpecularMap = NULL;
@@ -654,6 +605,7 @@ UniformDataHairGlobal        gUniformDataHairGlobal;
 //--------------------------------------------------------------------------------------------
 // SKELETAL ANIMATION
 //--------------------------------------------------------------------------------------------
+#if !defined(DIRECT3D11)
 Clip            gAnimationClipNeckCrack;
 Clip            gAnimationClipStand;
 ClipController  gAnimationClipControllerNeckCrack[HAIR_TYPE_COUNT];
@@ -666,7 +618,7 @@ SkeletonBatcher gSkeletonBatcher;
 eastl::vector<NamedCapsule>   gCapsules;
 eastl::vector<NamedTransform> gTransforms;
 eastl::vector<Capsule>        gFinalCapsules[HAIR_TYPE_COUNT];    // Stores the capsule transformed by the bone matrix
-
+#endif
 //--------------------------------------------------------------------------------------------
 // UI & OTHER
 //--------------------------------------------------------------------------------------------
@@ -684,8 +636,6 @@ bool				gbAnimateCamera = false;
 
 eastl::unordered_map< EMaterialTypes, EDiffuseReflectionModels > gMaterialLightingModelMap;
 
-const int			gSphereResolution = 30; // Increase for higher resolution spheres
-const float			gSphereDiameter = 0.5f;
 TextDrawDesc		gMaterialPropDraw = TextDrawDesc(0, 0xffaaaaaa, 32);
 
 // light
@@ -715,100 +665,6 @@ mat4                  gTextProjView;
 eastl::vector<mat4> gTextWorldMats;
 
 void ReloadScriptButtonCallback() { gLuaManager.ReloadUpdatableScript(); }
-
-// Generates an array of vertices and normals for a sphere
-void createSpherePoints(Vertex** ppPoints, int* pNumberOfPoints, int numberOfDivisions, float radius = 1.0f)
-{
-	eastl::vector<Vector3> vertices;
-	eastl::vector<Vector3> normals;
-	eastl::vector<Vector3> uvs;
-
-	float numStacks = (float)numberOfDivisions;
-	float numSlices = (float)numberOfDivisions;
-
-	for (int i = 0; i < numberOfDivisions; i++)
-	{
-		for (int j = 0; j < numberOfDivisions; j++)
-		{
-			// Sectioned into quads, utilizing two triangles
-			Vector3 topLeftPoint = { (float)(-cos(2.0f * PI * i / numStacks) * sin(PI * (j + 1.0f) / numSlices)),
-									 (float)(-cos(PI * (j + 1.0f) / numSlices)),
-									 (float)(sin(2.0f * PI * i / numStacks) * sin(PI * (j + 1.0f) / numSlices)) };
-			Vector3 topRightPoint = { (float)(-cos(2.0f * PI * (i + 1.0) / numStacks) * sin(PI * (j + 1.0) / numSlices)),
-									  (float)(-cos(PI * (j + 1.0) / numSlices)),
-									  (float)(sin(2.0f * PI * (i + 1.0) / numStacks) * sin(PI * (j + 1.0) / numSlices)) };
-			Vector3 botLeftPoint = { (float)(-cos(2.0f * PI * i / numStacks) * sin(PI * j / numSlices)), (float)(-cos(PI * j / numSlices)),
-									 (float)(sin(2.0f * PI * i / numStacks) * sin(PI * j / numSlices)) };
-			Vector3 botRightPoint = { (float)(-cos(2.0f * PI * (i + 1.0) / numStacks) * sin(PI * j / numSlices)),
-									  (float)(-cos(PI * j / numSlices)),
-									  (float)(sin(2.0f * PI * (i + 1.0) / numStacks) * sin(PI * j / numSlices)) };
-
-			// Top right triangle
-			vertices.push_back(radius * topLeftPoint);
-			vertices.push_back(radius * botRightPoint);
-			vertices.push_back(radius * topRightPoint);
-
-			normals.push_back(normalize(topLeftPoint));
-			float   theta = atan2f(normalize(topLeftPoint).getY(), normalize(topLeftPoint).getX());
-			float   phi = acosf(normalize(topLeftPoint).getZ());
-			Vector3 textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-
-			normals.push_back(normalize(botRightPoint));
-			theta = atan2f(normalize(botRightPoint).getY(), normalize(botRightPoint).getX());
-			phi = acosf(normalize(botRightPoint).getZ());
-			textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-
-			normals.push_back(normalize(topRightPoint));
-			theta = atan2f(normalize(topRightPoint).getY(), normalize(topRightPoint).getX());
-			phi = acosf(normalize(topRightPoint).getZ());
-			textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-
-			// Bot left triangle
-			vertices.push_back(radius * topLeftPoint);
-			vertices.push_back(radius * botLeftPoint);
-			vertices.push_back(radius * botRightPoint);
-
-			normals.push_back(normalize(topLeftPoint));
-			theta = atan2f(normalize(topLeftPoint).getY(), normalize(topLeftPoint).getX());
-			phi = acosf(normalize(topLeftPoint).getZ());
-			textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-
-			normals.push_back(normalize(botLeftPoint));
-			theta = atan2f(normalize(botLeftPoint).getY(), normalize(botLeftPoint).getX());
-			phi = acosf(normalize(botLeftPoint).getZ());
-			textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-
-			normals.push_back(normalize(botRightPoint));
-			theta = atan2f(normalize(botRightPoint).getY(), normalize(botRightPoint).getX());
-			phi = acosf(normalize(botRightPoint).getZ());
-			textcoord1 = { (theta / (2 * PI)), (phi / PI), 0.0f };
-			uvs.push_back(textcoord1);
-		}
-	}
-
-	*pNumberOfPoints = (uint32_t)vertices.size();
-	(*ppPoints) = (Vertex*)conf_malloc(sizeof(Vertex) * (*pNumberOfPoints));
-
-	for (uint32_t i = 0; i < (uint32_t)vertices.size(); i++)
-	{
-		Vertex vertex;
-		vertex.mPos = float3(vertices[i].getX(), vertices[i].getY(), vertices[i].getZ());
-		vertex.mNormal = float3(normals[i].getX(), normals[i].getY(), normals[i].getZ());
-
-		float theta = atan2f(normals[i].getY(), normals[i].getX());
-		float phi = acosf(normals[i].getZ());
-
-		vertex.mUv.x = (theta / (2 * PI));
-		vertex.mUv.y = (phi / PI);
-
-		(*ppPoints)[i] = vertex;
-	}
-}
 
 // Finds the vertex in the direction of the normal
 vec3 AABBGetVertex(AABB b, vec3 normal)
@@ -874,13 +730,10 @@ class MaterialPlayground: public IApp
 	struct StagingData
 	{
 		eastl::vector<eastl::string> mModelList;
-		eastl::vector<eastl::vector<Vertex>> mModelVerticesList;
-		eastl::vector<eastl::vector<uint>> mModelIndicesList;
 		eastl::vector<eastl::string> mMaterialNamesStorage;
 		eastl::vector<eastl::string> mGroundNamesStorage;
 		float* pJointPoints;
 		float* pBonePoints;
-		TFXAsset tfxAsset[9];
 		~StagingData()
 		{
 			conf_free(pJointPoints);
@@ -891,6 +744,22 @@ class MaterialPlayground: public IApp
 
 	bool Init()
 	{
+        // FILE PATHS
+		PathHandle programDirectory = fsCopyProgramDirectoryPath();
+        if (!fsPlatformUsesBundledResources())
+        {
+            PathHandle resourceDirRoot = fsAppendPathComponent(programDirectory, "../../../src/06_MaterialPlayground");
+            fsSetResourceDirectoryRootPath(resourceDirRoot);
+            
+            fsSetRelativePathForResourceDirectory(RD_TEXTURES,        "../../UnitTestResources/Textures");
+            fsSetRelativePathForResourceDirectory(RD_MESHES,          "../../UnitTestResources/Meshes");
+            fsSetRelativePathForResourceDirectory(RD_BUILTIN_FONTS,    "../../UnitTestResources/Fonts");
+            fsSetRelativePathForResourceDirectory(RD_ANIMATIONS,      "../../UnitTestResources/Animation");
+            fsSetRelativePathForResourceDirectory(RD_OTHER_FILES,      "../../../../Art");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_TEXT,  "../../../../Middleware_3/Text");
+            fsSetRelativePathForResourceDirectory(RD_MIDDLEWARE_UI,    "../../../../Middleware_3/UI");
+        }
+
 		initThreadSystem(&pIOThreads);
 
 		Timer t;
@@ -904,14 +773,19 @@ class MaterialPlayground: public IApp
 		gGPUPresetLevel = pRenderer->pActiveGpuSettings->mGpuVendorPreset.mPresetLevel;
 
 		QueueDesc queueDesc = {};
-		queueDesc.mType = CMD_POOL_DIRECT;
+		queueDesc.mType = QUEUE_TYPE_GRAPHICS;
+		queueDesc.mFlag = QUEUE_FLAG_INIT_MICROPROFILE;
 		addQueue(pRenderer, &queueDesc, &pGraphicsQueue);
-		// Create command pool and create a cmd buffer for each swapchain image
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pCmdPool);
-		addCmd_n(pCmdPool, false, gImageCount, &ppCmds);
+		CmdPoolDesc cmdPoolDesc = {};
+		cmdPoolDesc.pQueue = pGraphicsQueue;
+		addCmdPool(pRenderer, &cmdPoolDesc, &pCmdPool);
+		CmdDesc cmdDesc = {};
+		cmdDesc.pPool = pCmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppCmds);
 
-		addCmdPool(pRenderer, pGraphicsQueue, false, &pUICmdPool);
-		addCmd_n(pUICmdPool, false, gImageCount, &ppUICmds);
+		addCmdPool(pRenderer, &cmdPoolDesc, &pUICmdPool);
+		cmdDesc.pPool = pUICmdPool;
+		addCmd_n(pRenderer, &cmdDesc, gImageCount, &ppUICmds);
 
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
@@ -925,36 +799,29 @@ class MaterialPlayground: public IApp
 		gLuaManager.Init();
 		initResourceLoaderInterface(pRenderer);
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		if (!gVirtualJoystick.Init(pRenderer, "circlepad", FSR_Textures))
+		if (!gVirtualJoystick.Init(pRenderer, "circlepad", RD_TEXTURES))
 			return false;
-#endif
-		initProfiler(pRenderer);
-		profileRegisterInput();
-		addGpuProfiler(pRenderer, pGraphicsQueue, &pGpuProfiler, "GpuProfiler");
 
 		pStagingData = conf_new(StagingData);
 		// CREATE RENDERING RESOURCES
 		//
+		CreateShaders();
 
 		ComputePBRMaps();
 		
 		LoadModelsAndTextures();
 
-		CreateRasterizerStates();
-		CreateDepthStates();
-		CreateBlendStates();
 		CreateSamplers();
-		CreateShaders();
+		//CreateShaders();
 		CreateRootSignatures();
 		CreateUniformBuffers();
 
 		CreateResources();
 		LoadAnimations();
-		CreateDescriptorBinders();
+		CreateDescriptorSets();
 
 		waitThreadSystemIdle(pIOThreads);
-		waitBatchCompleted();
+		waitForAllResourceLoads();
 
 		conf_delete(pStagingData);
 
@@ -965,7 +832,10 @@ class MaterialPlayground: public IApp
 		if (!gAppUI.Init(pRenderer))
 			return false;
 
-		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", FSR_Builtin_Fonts);
+		gAppUI.LoadFont("TitilliumText/TitilliumText-Bold.otf", RD_BUILTIN_FONTS);
+
+        initProfiler();
+        gGpuProfileToken = addGpuProfiler(pRenderer, pGraphicsQueue, "GpuProfiler");
 
 		GuiDesc guiDesc = {};
 		float dpiScale = getDpiScale().x;
@@ -990,13 +860,7 @@ class MaterialPlayground: public IApp
 
 		pCameraController = createFpsCameraController(camPos, lookAt);
 		pLightView = createGuiCameraController(f3Tov3(gDirectionalLightPosition), vec3(0,0,0));
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		gVirtualJoystick.InitLRSticks();
-		pCameraController->setVirtualJoystick(&gVirtualJoystick);
-#endif
 		pCameraController->setMotionParameters(camParameters);
-		InputSystem::RegisterInputEvent(cameraInputEvent);
-		InputSystem::RegisterInputEvent(pFnInputEvent);
 
 		ICameraController* cameraLocalPtr = pCameraController;
 		gLuaManager.SetFunction("GetCameraPosition", [cameraLocalPtr](ILuaStateWrap* state) -> int {
@@ -1021,8 +885,8 @@ class MaterialPlayground: public IApp
 			state->PushResultInteger(gbAnimateCamera ? 1 : 0);
 			return 1;    // return amount of arguments
 		});
-		eastl::string updateCameraFilename = FileSystem::FixPath("updateCamera.lua", FSR_Middleware2);
-		gbLuaScriptingSystemLoadedSuccessfully = gLuaManager.SetUpdatableScript(updateCameraFilename.c_str(), "Update", "Exit");
+        PathHandle updateCameraPath = fsCopyPathInResourceDirectory(RD_MIDDLEWARE_2, "updateCamera.lua");
+		gbLuaScriptingSystemLoadedSuccessfully = gLuaManager.SetUpdatableScript(updateCameraPath, "Update", "Exit");
 
 		// SET MATERIAL LIGHTING MODELS
 		//
@@ -1033,11 +897,49 @@ class MaterialPlayground: public IApp
 
 		// ... add more as new mateirals are introduced.
 
+        if (!initInputSystem(pWindow))
+            return false;
+
+		// App Actions
+        InputActionDesc actionDesc = { InputBindings::BUTTON_DUMP, [](InputActionContext* ctx) { dumpProfileData(((IApp*)ctx->pUserData)->GetName()); return true; }, this };
+        addInputAction(&actionDesc);
+        actionDesc = { InputBindings::BUTTON_FULLSCREEN, [](InputActionContext* ctx) { toggleFullscreen(((IApp*)ctx->pUserData)->pWindow); return true; }, this };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_EXIT, [](InputActionContext* ctx) { requestShutdown(); return true; } };
+		addInputAction(&actionDesc);
+		actionDesc =
+		{
+			InputBindings::BUTTON_ANY, [](InputActionContext* ctx)
+			{
+				bool capture = gAppUI.OnButton(ctx->mBinding, ctx->mBool, ctx->pPosition);
+				setEnableCaptureInput(capture && INPUT_ACTION_PHASE_CANCELED != ctx->mPhase);
+				return true;
+			}, this
+		};
+		addInputAction(&actionDesc);
+		typedef bool (*CameraInputHandler)(InputActionContext* ctx, uint32_t index);
+		static CameraInputHandler onCameraInput = [](InputActionContext* ctx, uint32_t index)
+		{
+			if (!gAppUI.IsFocused() && *ctx->pCaptured)
+			{
+				gVirtualJoystick.OnMove(index, ctx->mPhase != INPUT_ACTION_PHASE_CANCELED, ctx->pPosition);
+				index ? pCameraController->onRotate(ctx->mFloat2) : pCameraController->onMove(ctx->mFloat2);
+			}
+			return true;
+		};
+		actionDesc = { InputBindings::FLOAT_RIGHTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 1); }, NULL, 20.0f, 200.0f, 0.5f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::FLOAT_LEFTSTICK, [](InputActionContext* ctx) { return onCameraInput(ctx, 0); }, NULL, 20.0f, 200.0f, 1.0f };
+		addInputAction(&actionDesc);
+		actionDesc = { InputBindings::BUTTON_NORTH, [](InputActionContext* ctx) { pCameraController->resetView(); return true; } };
+		addInputAction(&actionDesc);
+
 		return true;
 	}
 
 	void Exit()
 	{
+		exitInputSystem();
 		gLuaManager.Exit();
 		shutdownThreadSystem(pIOThreads);
 
@@ -1058,7 +960,7 @@ class MaterialPlayground: public IApp
 		DestroyUniformBuffers();
 		DestroyAnimations();
 		DestroyResources();
-		DestroyDescriptorBinders();
+		DestroyDescriptorSets();
 		DestroyTextures();
 		DestroyModels();
 		DestroyPBRMaps();
@@ -1067,29 +969,36 @@ class MaterialPlayground: public IApp
 		DestroyShaders();
 
 		DestroySamplers();
-		DestroyBlendStates();
-		DestroyDepthStates();
-		DestroyRasterizerStates();
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
 		gVirtualJoystick.Exit();
-#endif
-		removeGpuProfiler(pRenderer, pGpuProfiler);
 
 		GuiController::Exit();
 		gAppUI.Exit();
 
 		// Remove commands and command pool&
-		removeCmd_n(pUICmdPool, gImageCount, ppUICmds);
+		removeCmd_n(pRenderer, gImageCount, ppUICmds);
 		removeCmdPool(pRenderer, pUICmdPool);
 
-		removeCmd_n(pCmdPool, gImageCount, ppCmds);
+		removeCmd_n(pRenderer, gImageCount, ppCmds);
 		removeCmdPool(pRenderer, pCmdPool);
-		removeQueue(pGraphicsQueue);
+		removeQueue(pRenderer, pGraphicsQueue);
 
 		// Remove resource loader and renderer
-		removeResourceLoaderInterface(pRenderer);
+		exitResourceLoaderInterface(pRenderer);
 		removeRenderer(pRenderer);
+
+		gTextWorldMats.set_capacity(0);
+
+#if !defined(DIRECT3D11)
+		gCapsules.set_capacity(0);
+		gTransforms.set_capacity(0);
+		for (uint32_t i = 0; i < HAIR_TYPE_COUNT; ++i)
+		{
+			gFinalCapsules[i].set_capacity(0);
+			gHairTypeIndices[i].set_capacity(0);
+		}
+#endif
+		gMaterialLightingModelMap.clear(true);
 	}
 
 	bool Load()
@@ -1097,15 +1006,18 @@ class MaterialPlayground: public IApp
 		CreateRenderTargets();
 		CreatePipelines();
 
-		RenderTarget* pRenderTargets[] = { pSwapChain->ppSwapchainRenderTargets[0], pRenderTargetDepth };
+		RenderTarget* pRenderTargets[] = { pSwapChain->ppRenderTargets[0], pRenderTargetDepth };
 		if (!gAppUI.Load(pRenderTargets, 2))
 			return false;
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
-		if (!gVirtualJoystick.Load(pSwapChain->ppSwapchainRenderTargets[0]))
+		if (!gVirtualJoystick.Load(pSwapChain->ppRenderTargets[0]))
 			return false;
-#endif
-		loadProfiler(pSwapChain->ppSwapchainRenderTargets[0]);
+
+		loadProfilerUI(&gAppUI, mSettings.mWidth, mSettings.mHeight);
+
+		waitForAllResourceLoads();
+
+		PrepareDescriptorSets();
 
 		return true;
 	}
@@ -1114,12 +1026,10 @@ class MaterialPlayground: public IApp
 	{
 		waitQueueIdle(pGraphicsQueue);
 
-		unloadProfiler();
+		unloadProfilerUI();
 		gAppUI.Unload();
 
-#if defined(TARGET_IOS) || defined(__ANDROID__)
 		gVirtualJoystick.Unload();
-#endif
 
 		DestroyPipelines();
 		DestroyRenderTargets();
@@ -1127,30 +1037,7 @@ class MaterialPlayground: public IApp
 
 	void Update(float deltaTime)
 	{
-		// HANDLE INPUT
-		//
-		if (InputSystem::GetBoolInput(KEY_BUTTON_X_TRIGGERED))
-		{
-			RecenterCameraView(170.0f);
-		}
-		if (InputSystem::GetBoolInput(KEY_LEFT_TRIGGER_TRIGGERED) && gMaterialType == MATERIAL_WOOD)    // KEY_LEFT_TRIGGER = spacebar
-		{
-			gDiffuseReflectionModel = (gDiffuseReflectionModel + 1) == DIFFUSE_REFLECTION_MODEL_COUNT ? 0 : gDiffuseReflectionModel + 1;
-		}
-
-		// rest of the input callbacks are in 'static bool pFnInputEvent(const ButtonData* data)'
-
-    // ProfileSetDisplayMode()
-    // TODO: need to change this better way 
-    if (bToggleMicroProfiler != bPrevToggleMicroProfiler)
-    {
-      Profile& S = *ProfileGet();
-      int nValue = bToggleMicroProfiler ? 1 : 0;
-      nValue = nValue >= 0 && nValue < P_DRAW_SIZE ? nValue : S.nDisplay;
-      S.nDisplay = nValue;
-
-      bPrevToggleMicroProfiler = bToggleMicroProfiler;
-    }
+		updateInputSystem(mSettings.mWidth, mSettings.mHeight);
 
 		// UPDATE UI & CAMERA
 		//
@@ -1238,16 +1125,8 @@ class MaterialPlayground: public IApp
 			{
 				gUniformDataObject.textureConfig = ETextureConfigFlags::TEXTURE_CONFIG_FLAGS_NONE;
 			}
-
-
-			gUniformDataMatBall[i] = gUniformDataObject;
-			for (uint32_t frameIdx = 0; frameIdx < gImageCount; ++frameIdx)
-			{
-				BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferMatBall[frameIdx][i], &gUniformDataObject };
-				updateResource(&objBuffUpdateDesc);
-			}
 		}
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		if (gMaterialType == MATERIAL_HAIR)
 		{
 			if (gHairColor != gLastHairColor)
@@ -1283,7 +1162,7 @@ class MaterialPlayground: public IApp
 					gAnimatedObject[hairType].SetRootTransform(
 						mat4::translation(vec3(20.0f - hairType * 10.0f, -5.5f, 10.0f)) * mat4::scale(vec3(5.0f)));
 					if (!gAnimatedObject[hairType].Update(min(deltaTime, 1.0f / 60.0f)))
-						InfoMsg("Animation NOT Updating!");
+						LOGF(eINFO, "Animation NOT Updating!");
 					gAnimatedObject[hairType].PoseRig();
 				}
 				else
@@ -1376,22 +1255,12 @@ class MaterialPlayground: public IApp
 
 	void Draw()
 	{
-		static const char* pTextureName[] =
-		{
-			"albedoMap",
-			"normalMap",
-			"metallicMap",
-			"roughnessMap",
-			"aoMap"
-		};
-
-
 		// FRAME SYNC
 		//
 		// This will acquire the next swapchain image
 		acquireNextImage(pRenderer, pSwapChain, pImageAcquiredSemaphore, NULL, &gFrameIndex);
 
-		RenderTarget* pRenderTarget = pSwapChain->ppSwapchainRenderTargets[gFrameIndex];
+		RenderTarget* pRenderTarget = pSwapChain->ppRenderTargets[gFrameIndex];
 		Semaphore*    pRenderCompleteSemaphore = pRenderCompleteSemaphores[gFrameIndex];
 		Fence*        pRenderCompleteFence = pRenderCompleteFences[gFrameIndex];
 
@@ -1404,21 +1273,29 @@ class MaterialPlayground: public IApp
 		//
 		for (size_t totalBuf = 0; totalBuf < MATERIAL_INSTANCE_COUNT; ++totalBuf)
 		{
-			BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferMatBall[gFrameIndex][totalBuf], &gUniformDataMatBall[totalBuf] };
-			updateResource(&objBuffUpdateDesc);
+			BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferMatBall[gFrameIndex][totalBuf] };
+			beginUpdateResource(&objBuffUpdateDesc);
+			*(UniformObjData*)objBuffUpdateDesc.pMappedData = gUniformDataMatBall[totalBuf];
+			endUpdateResource(&objBuffUpdateDesc, NULL);
 		}
 
 		// using the existing buffer for the shadow pass: &gUniformDataCamera -------------------------------------+
 		// this will work as long as projView matrix is the first piece of data in &gUniformDataCamera             v
 		//BufferUpdateDesc shadowMapCamBuffUpdatedesc = { pUniformBufferCameraShadowPass[gFrameIndex], &gUniformDataCamera };
-		BufferUpdateDesc shadowMapCamBuffUpdatedesc = { pUniformBufferCameraShadowPass[gFrameIndex], &gUniformDataDirectionalLights.mDirectionalLights[0].mViewProj };
-		updateResource(&shadowMapCamBuffUpdatedesc);
+		BufferUpdateDesc shadowMapCamBuffUpdatedesc = { pUniformBufferCameraShadowPass[gFrameIndex] };
+		beginUpdateResource(&shadowMapCamBuffUpdatedesc);
+		*(mat4*)shadowMapCamBuffUpdatedesc.pMappedData = gUniformDataDirectionalLights.mDirectionalLights[0].mViewProj;
+		endUpdateResource(&shadowMapCamBuffUpdatedesc, NULL);
 
-		BufferUpdateDesc camBuffUpdateDesc = { pUniformBufferCamera[gFrameIndex], &gUniformDataCamera };
-		updateResource(&camBuffUpdateDesc);
+		BufferUpdateDesc camBuffUpdateDesc = { pUniformBufferCamera[gFrameIndex] };
+		beginUpdateResource(&camBuffUpdateDesc);
+		*(UniformCamData*)camBuffUpdateDesc.pMappedData = gUniformDataCamera;
+		endUpdateResource(&camBuffUpdateDesc, NULL);
 
-		BufferUpdateDesc skyboxViewProjCbv = { pUniformBufferCameraSkybox[gFrameIndex], &gUniformDataCameraSkybox };
-		updateResource(&skyboxViewProjCbv);
+		BufferUpdateDesc skyboxViewProjCbv = { pUniformBufferCameraSkybox[gFrameIndex] };
+		beginUpdateResource(&skyboxViewProjCbv);
+		*(UniformCamData*)skyboxViewProjCbv.pMappedData = gUniformDataCameraSkybox;
+		endUpdateResource(&skyboxViewProjCbv, NULL);
 
 		for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 		{
@@ -1427,50 +1304,60 @@ class MaterialPlayground: public IApp
 
 			for (int i = 0; i < MAX_NUM_DIRECTIONAL_LIGHTS; ++i)
 			{
-				BufferUpdateDesc hairShadowBuffUpdateDesc = { pUniformBufferCameraHairShadows[gFrameIndex][hairType][i],
-															  &gUniformDataCameraHairShadows[hairType][i] };
-				updateResource(&hairShadowBuffUpdateDesc);
+				BufferUpdateDesc hairShadowBuffUpdateDesc = { pUniformBufferCameraHairShadows[gFrameIndex][hairType][i] };
+				beginUpdateResource(&hairShadowBuffUpdateDesc);
+				*(UniformCamData*)hairShadowBuffUpdateDesc.pMappedData = gUniformDataCameraHairShadows[hairType][i];
+				endUpdateResource(&hairShadowBuffUpdateDesc, NULL);
 			}
 		}
 
-		BufferUpdateDesc directionalLightsBufferUpdateDesc = { pUniformBufferDirectionalLights, &gUniformDataDirectionalLights };
-		updateResource(&directionalLightsBufferUpdateDesc);
+		BufferUpdateDesc directionalLightsBufferUpdateDesc = { pUniformBufferDirectionalLights };
+		beginUpdateResource(&directionalLightsBufferUpdateDesc);
+		*(UniformDataDirectionalLights*)directionalLightsBufferUpdateDesc.pMappedData = gUniformDataDirectionalLights;
+		endUpdateResource(&directionalLightsBufferUpdateDesc, NULL);
 
-		BufferUpdateDesc hairGlobalBufferUpdateDesc = { pUniformBufferHairGlobal, &gUniformDataHairGlobal };
-		updateResource(&hairGlobalBufferUpdateDesc);
+		BufferUpdateDesc hairGlobalBufferUpdateDesc = { pUniformBufferHairGlobal };
+		beginUpdateResource(&hairGlobalBufferUpdateDesc);
+		*(UniformDataHairGlobal*)hairGlobalBufferUpdateDesc.pMappedData = gUniformDataHairGlobal;
+		endUpdateResource(&hairGlobalBufferUpdateDesc, NULL);
 
 		for (size_t i = 0; i < gHair.size(); ++i)
 		{
-			BufferUpdateDesc hairShadingBufferUpdateDesc = { gHair[i].pUniformBufferHairShading[gFrameIndex],
-															 &gHair[i].mUniformDataHairShading };
-			updateResource(&hairShadingBufferUpdateDesc);
+			BufferUpdateDesc hairShadingBufferUpdateDesc = { gHair[i].pUniformBufferHairShading[gFrameIndex] };
+			beginUpdateResource(&hairShadingBufferUpdateDesc);
+			*(UniformDataHairShading*)hairShadingBufferUpdateDesc.pMappedData = gHair[i].mUniformDataHairShading;
+			endUpdateResource(&hairShadingBufferUpdateDesc, NULL);
 
-			BufferUpdateDesc hairSimulationBufferUpdateDesc = { gHair[i].pUniformBufferHairSimulation[gFrameIndex],
-																&gHair[i].mUniformDataHairSimulation };
-			updateResource(&hairSimulationBufferUpdateDesc);
+			BufferUpdateDesc hairSimulationBufferUpdateDesc = { gHair[i].pUniformBufferHairSimulation[gFrameIndex] };
+			beginUpdateResource(&hairSimulationBufferUpdateDesc);
+			*(UniformDataHairSimulation*)hairSimulationBufferUpdateDesc.pMappedData = gHair[i].mUniformDataHairSimulation;
+			endUpdateResource(&hairSimulationBufferUpdateDesc, NULL);
 		}
 
+#if !defined(DIRECT3D11)
 		if (gMaterialType == MATERIAL_HAIR)
 			gSkeletonBatcher.SetPerInstanceUniforms(gFrameIndex);
+#endif
 
 		// Draw
 		eastl::vector<Cmd*> allCmds;
 		Cmd*                  cmd = ppCmds[gFrameIndex];
 		beginCmd(cmd);
 
-		cmdBeginGpuFrameProfile(cmd, pGpuProfiler);
+		cmdBeginGpuFrameProfile(cmd, gGpuProfileToken);
 
-		TextureBarrier barriers[] = { { pRenderTarget->pTexture, RESOURCE_STATE_RENDER_TARGET },
-									  { pRenderTargetDepth->pTexture, RESOURCE_STATE_DEPTH_WRITE } };
-		cmdResourceBarrier(cmd, 0, NULL, 2, barriers, false);
+		RenderTargetBarrier barriers[] =
+		{
+			{ pRenderTarget, RESOURCE_STATE_RENDER_TARGET },
+			{ pRenderTargetDepth, RESOURCE_STATE_DEPTH_WRITE },
+			{ pRenderTargetShadowMap, RESOURCE_STATE_DEPTH_WRITE }
+		};
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 3, barriers);
 
 
 		// DRAW DIRECTIONAL SHADOW MAP
 		//
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Shadow Pass", true);
-		
-		TextureBarrier shadowTexBarrier[] = { { pRenderTargetShadowMap->pTexture, RESOURCE_STATE_DEPTH_WRITE } };
-		cmdResourceBarrier(cmd, 0, NULL, 1, shadowTexBarrier, false);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Shadow Pass");
 
 		LoadActionsDesc loadActions = {};
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_DONTCARE;
@@ -1479,206 +1366,143 @@ class MaterialPlayground: public IApp
 		loadActions.mClearDepth.stencil = 0;
 
 		cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetShadowMap, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTargetShadowMap->mDesc.mWidth, (float)pRenderTargetShadowMap->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTargetShadowMap->mDesc.mWidth, pRenderTargetShadowMap->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTargetShadowMap->mWidth, (float)pRenderTargetShadowMap->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTargetShadowMap->mWidth, pRenderTargetShadowMap->mHeight);
 		cmdBindPipeline(cmd, pPipelineShadowPass);
-
-		DescriptorData shadowParams[1] = {};
-		shadowParams[0].pName = "cbCamera";
-		shadowParams[0].ppBuffers = &pUniformBufferCameraShadowPass[gFrameIndex];
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShadowPass, 1, shadowParams);
 
 		if (gMaterialType != MATERIAL_HAIR)
 		{
+			cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetShadow[0]);
+
 			// DRAW THE GROUND
 			//
-			cmdBindVertexBuffer(cmd, 1, &pMeshes[MESH_CUBE]->pVertexBuffer, NULL);
-			cmdBindIndexBuffer(cmd, pMeshes[MESH_CUBE]->pIndexBuffer, 0);
+			cmdBindVertexBuffer(cmd, 1, &gMeshes[MESH_CUBE]->pVertexBuffers[0], &gMeshes[MESH_CUBE]->mVertexStrides[0], NULL);
+			cmdBindIndexBuffer(cmd, gMeshes[MESH_CUBE]->pIndexBuffer, gMeshes[MESH_CUBE]->mIndexType, 0);
 
-			shadowParams[0].pName = "cbObject";
-			shadowParams[0].ppBuffers = &pUniformBufferGroundPlane;	// TODO
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShadowPass, 1, shadowParams);
-			cmdDrawIndexed(cmd, pMeshes[MESH_CUBE]->mIndexCount, 0, 0);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetShadow[1]);
+			cmdDrawIndexed(cmd, gMeshes[MESH_CUBE]->mIndexCount, 0, 0);
 
 			// DRAW THE LABEL PLATES
 			//
 			for (int j = 0; j < MATERIAL_INSTANCE_COUNT; ++j)
 			{
-				shadowParams[0].pName = "cbObject";
-				shadowParams[0].ppBuffers = &pUniformBufferNamePlates[j]; // TODO
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShadowPass, 1, shadowParams);
-				cmdDrawIndexed(cmd, pMeshes[MESH_CUBE]->mIndexCount, 0, 0);
+				cmdBindDescriptorSet(cmd, 1 + j, pDescriptorSetShadow[1]);
+				cmdDrawIndexed(cmd, gMeshes[MESH_CUBE]->mIndexCount, 0, 0);
 			}
 
 			// DRAW THE MATERIAL BALLS
 			//
-			cmdBindVertexBuffer(cmd, 1, &pMeshes[MESH_MAT_BALL]->pVertexBuffer, NULL);
-			cmdBindIndexBuffer(cmd, pMeshes[MESH_MAT_BALL]->pIndexBuffer, 0);
+			cmdBindVertexBuffer(cmd, 1, &gMeshes[MESH_MAT_BALL]->pVertexBuffers[0], &gMeshes[MESH_MAT_BALL]->mVertexStrides[0], NULL);
+			cmdBindIndexBuffer(cmd, gMeshes[MESH_MAT_BALL]->pIndexBuffer, gMeshes[MESH_MAT_BALL]->mIndexType, 0);
 			for (int i = 0; i < MATERIAL_INSTANCE_COUNT; ++i)
 			{
-				shadowParams[0].pName = "cbObject";
-				shadowParams[0].ppBuffers = &pUniformBufferMatBall[gFrameIndex][i]; // TODO
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShadowPass, 1, shadowParams);
-				cmdDrawIndexed(cmd, pMeshes[MESH_MAT_BALL]->mIndexCount, 0, 0);
+				cmdBindDescriptorSet(cmd, 1 + MATERIAL_INSTANCE_COUNT + (gFrameIndex * MATERIAL_INSTANCE_COUNT + i), pDescriptorSetShadow[1]);
+				cmdDrawIndexed(cmd, gMeshes[MESH_MAT_BALL]->mIndexCount, 0, 0);
 			}
 		}
 
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);	// Shadow Pass
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);	// Shadow Pass
 
 
 
 		// DRAW SKYBOX
 		//
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Skybox Pass", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Skybox Pass");
 		loadActions = {};
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
 		loadActions.mLoadActionDepth = LOAD_ACTION_DONTCARE;
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 		if (gDrawSkybox)    // TODO: do we need this condition?
 		{
+			const uint32_t skyboxStride = sizeof(float) * 4;
 			cmdBindPipeline(cmd, pPipelineSkybox);
-			DescriptorData skyParams[2] = {};
-			skyParams[0].pName = "uniformBlock";
-			skyParams[0].ppBuffers = &pUniformBufferCameraSkybox[gFrameIndex];
-			skyParams[1].pName = "skyboxTex";
-			skyParams[1].ppTextures = &pTextureSkybox;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureSkybox, 2, skyParams);
-			cmdBindVertexBuffer(cmd, 1, &pVertexBufferSkybox, NULL);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetSkybox[0]);
+			cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetSkybox[1]);
+			cmdBindVertexBuffer(cmd, 1, &pVertexBufferSkybox, &skyboxStride, NULL);
 			cmdDraw(cmd, 36, 0);
 		}
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);	// Skybox Pass
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);	// Skybox Pass
 
 
 		// DRAW THE OBJECTS W/ MATERIALS
 		//
 		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
-		shadowTexBarrier[0] = { pRenderTargetShadowMap->pTexture, RESOURCE_STATE_SHADER_RESOURCE };
-		cmdResourceBarrier(cmd, 0, NULL, 1, shadowTexBarrier, false);
+		RenderTargetBarrier shadowTexBarrier = { pRenderTargetShadowMap, RESOURCE_STATE_SHADER_RESOURCE };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, &shadowTexBarrier);
 
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_LOAD;
 		loadActions.mLoadActionDepth = LOAD_ACTION_CLEAR;
-		loadActions.mClearDepth = pRenderTargetDepth->mDesc.mClearValue;
+		loadActions.mClearDepth = pRenderTargetDepth->mClearValue;
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 		cmdBindPipeline(cmd, pPipelineBRDF);
-		
-
-		const int numDesc = 7;
-		DescriptorData params[numDesc] = {};
-		params[0].pName = "cbCamera";
-		params[0].ppBuffers = &pUniformBufferCamera[gFrameIndex];
-		params[1].pName = "cbPointLights";
-		params[1].ppBuffers = &pUniformBufferPointLights;
-		params[2].pName = "cbDirectionalLights";
-		params[2].ppBuffers = &pUniformBufferDirectionalLights;
-		params[3].pName = "brdfIntegrationMap";
-		params[3].ppTextures = &pTextureBRDFIntegrationMap;
-		params[4].pName = "irradianceMap";
-		params[4].ppTextures = &pTextureIrradianceMap;
-		params[5].pName = "specularMap";
-		params[5].ppTextures = &pTextureSpecularMap;
-		params[6].pName = "shadowMap";
-		params[6].ppTextures = &pRenderTargetShadowMap->pTexture;
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureBRDF, numDesc, params);
-
-		int matTypeId = GuiController::currentMaterialType * MATERIAL_TEXTURE_COUNT * MATERIAL_INSTANCE_COUNT;
-		int textureIndex = 0;
-
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetBRDF[0]);
+		cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetBRDF[1]);
 
 		// DRAW THE GROUND PLANE
 		//
-		cmdBindVertexBuffer(cmd, 1, &pMeshes[MESH_CUBE]->pVertexBuffer, NULL);
-		cmdBindIndexBuffer(cmd, pMeshes[MESH_CUBE]->pIndexBuffer, 0);
-
-		for (int j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
-		{
-			params[j].pName = pTextureName[j];
-			params[j].ppTextures = &pTextureMaterialMapsGround[j];
-		}
-		params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
-		params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferGroundPlane;
-
-		cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureBRDF, MATERIAL_TEXTURE_COUNT + 1, params);
-		cmdDrawIndexed(cmd, pMeshes[MESH_CUBE]->mIndexCount, 0, 0);
-
+		cmdBindVertexBuffer(cmd, 1, &gMeshes[MESH_CUBE]->pVertexBuffers[0], &gMeshes[MESH_CUBE]->mVertexStrides[0], NULL);
+		cmdBindIndexBuffer(cmd, gMeshes[MESH_CUBE]->pIndexBuffer, gMeshes[MESH_CUBE]->mIndexType, 0);
+		cmdBindDescriptorSet(cmd, 0, pDescriptorSetBRDF[2]);
+		cmdDrawIndexed(cmd, gMeshes[MESH_CUBE]->mIndexCount, 0, 0);
 
 		// DRAW THE OBJECTS W/ MATERIALS
 		//
 		if (gMaterialType != MATERIAL_HAIR)
 		{
-			cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Lighting Pass", true);
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Lighting Pass");
 
 			// DRAW THE LABEL PLATES
 			//
 			for (int j = 0; j < MATERIAL_INSTANCE_COUNT; ++j)
 			{
-				for (int j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
-				{
-					params[j].pName = pTextureName[j];
-					params[j].ppTextures = &pTextureMaterialMaps[j + 4];
-				}
-				params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
-				params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferNamePlates[j];
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureBRDF, MATERIAL_TEXTURE_COUNT + 1, params);
-				cmdDrawIndexed(cmd, pMeshes[MESH_CUBE]->mIndexCount, 0, 0);
+				cmdBindDescriptorSet(cmd, 1 + j, pDescriptorSetBRDF[2]);
+				cmdDrawIndexed(cmd, gMeshes[MESH_CUBE]->mIndexCount, 0, 0);
 			}
 
-			cmdBindVertexBuffer(cmd, 1, &pMeshes[MESH_MAT_BALL]->pVertexBuffer, NULL);
-			cmdBindIndexBuffer(cmd, pMeshes[MESH_MAT_BALL]->pIndexBuffer, 0);
+			cmdBindVertexBuffer(cmd, 1, &gMeshes[MESH_MAT_BALL]->pVertexBuffers[0], &gMeshes[MESH_MAT_BALL]->mVertexStrides[0], NULL);
+			cmdBindIndexBuffer(cmd, gMeshes[MESH_MAT_BALL]->pIndexBuffer, gMeshes[MESH_MAT_BALL]->mIndexType, 0);
 
 			// DRAW THE MATERIAL BALLS
 			//
 #if 1    // toggle for rendering objects
 			for (int i = 0; i < MATERIAL_INSTANCE_COUNT; ++i)
 			{
-				//binding pbr material textures
-				for (int j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
-				{
-					int index = j + MATERIAL_TEXTURE_COUNT * i;
-					textureIndex = matTypeId + index;
-					params[j].pName = pTextureName[j];
-					if (textureIndex >= gMaterialTextureCount)
-					{
-						LOGF(LogLevel::eERROR, "texture index greater than array size, setting it to default texture");
-						textureIndex = matTypeId + j;
-					}
-					params[j].ppTextures = &pTextureMaterialMaps[textureIndex];
-				}
-
-				params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
-				params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferMatBall[gFrameIndex][i];
-
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureBRDF, MATERIAL_TEXTURE_COUNT + 1, params);
-				cmdDrawIndexed(cmd, pMeshes[MESH_MAT_BALL]->mIndexCount, 0, 0);
+				const uint32_t index = 1 + MATERIAL_INSTANCE_COUNT + (gFrameIndex * MATERIAL_BRDF_COUNT * MATERIAL_INSTANCE_COUNT) + (GuiController::currentMaterialType * MATERIAL_INSTANCE_COUNT) + i;
+				cmdBindDescriptorSet(cmd, index, pDescriptorSetBRDF[2]);
+				cmdDrawIndexed(cmd, gMeshes[MESH_MAT_BALL]->mIndexCount, 0, 0);
 			}
 #endif
 
-			cmdEndGpuTimestampQuery(cmd, pGpuProfiler);	// Lighting Pass
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);	// Lighting Pass
 		}
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		// Draw hair
 		else if (gMaterialType == MATERIAL_HAIR)
 		{
 			//// draw the skeleton of the rig
 			gSkeletonBatcher.Draw(cmd, gFrameIndex);
 
-			DescriptorData hairParams[11] = {};
+			uint32_t descriptorSetIndex = gFrameIndex * gHairDynamicDescriptorSetCount;
 
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
 			// Hair simulation
-			cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Hair simulation", true);
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair simulation");
 			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
 				if (!gHairTypeInfo[hairType].mInView)
+				{
+					descriptorSetIndex += (uint32_t)gHairTypeIndices[hairType].size();
 					continue;
+				}
 
 				for (size_t i = 0; i < gHairTypeIndices[hairType].size(); ++i)
 				{
@@ -1694,108 +1518,64 @@ class MaterialPlayground: public IApp
 						bufferBarriers[j].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[j];
 						bufferBarriers[j].mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
 					}
-					cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, false);
+					cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, 0, NULL);
 
 					if (gFirstHairSimulationFrame || gHairTypeInfo[hairType].mPreWarm)
 					{
 						cmdBindPipeline(cmd, pPipelineHairPreWarm);
-
-						hairParams[0].pName = "cbSimulation";
-						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-						hairParams[1].pName = "HairVertexPositions";
-						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-						hairParams[2].pName = "HairVertexPositionsPrev";
-						hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
-						hairParams[3].pName = "HairVertexPositionsPrevPrev";
-						hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
-						hairParams[4].pName = "HairRestPositions";
-						hairParams[4].ppBuffers = &gHair[k].pBufferHairVertexPositions;
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairPreWarm, 5, hairParams);
+						cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairPreWarm);
 
 						cmdDispatch(cmd, dispatchGroupCountPerVertex, 1, 1);
 
 						for (int j = 0; j < 3; ++j)
 						{
 							bufferBarriers[j].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[j];
-							bufferBarriers[j].mNewState = gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
+							bufferBarriers[j].mNewState = (ResourceState)gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
 						}
-						cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, false);
+						cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, 0, NULL);
 					}
 
 					cmdBindPipeline(cmd, pPipelineHairIntegrate);
-
-					hairParams[0].pName = "cbSimulation";
-					hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-					hairParams[1].pName = "HairVertexPositions";
-					hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-					hairParams[2].pName = "HairVertexPositionsPrev";
-					hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
-					hairParams[3].pName = "HairVertexPositionsPrevPrev";
-					hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
-					hairParams[4].pName = "HairRestPositions";
-					hairParams[4].ppBuffers = &gHair[k].pBufferHairVertexPositions;
-					hairParams[5].pName = "cbHairGlobal";
-					hairParams[5].ppBuffers = &pUniformBufferHairGlobal;
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairIntegrate, 6, hairParams);
-
+					cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairIntegrate);
 					cmdDispatch(cmd, dispatchGroupCountPerVertex, 1, 1);
 
 					for (int j = 0; j < 3; ++j)
 					{
 						bufferBarriers[j].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[j];
-						bufferBarriers[j].mNewState = gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
+						bufferBarriers[j].mNewState = (ResourceState)gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
 					}
-					cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, false);
+					cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, 0, NULL);
 
 					if (gHair[k].mUniformDataHairSimulation.mShockPropagationStrength > 0.0f)
 					{
 						cmdBindPipeline(cmd, pPipelineHairShockPropagation);
-
-						hairParams[0].pName = "cbSimulation";
-						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-						hairParams[1].pName = "HairVertexPositions";
-						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-						hairParams[2].pName = "HairVertexPositionsPrev";
-						hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
-						hairParams[3].pName = "HairVertexPositionsPrevPrev";
-						hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairShockPropagation, 4, hairParams);
-
+						cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairShockPropagate);
 						cmdDispatch(cmd, dispatchGroupCountPerStrand, 1, 1);
 
 						for (int j = 0; j < 3; ++j)
 						{
 							bufferBarriers[j].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[j];
-							bufferBarriers[j].mNewState = gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
+							bufferBarriers[j].mNewState = (ResourceState)gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
 						}
-						cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, false);
+						cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, 0, NULL);
 					}
 
 					if (gHair[k].mUniformDataHairSimulation.mLocalConstraintIterations > 0 &&
 						gHair[k].mUniformDataHairSimulation.mLocalStiffness > 0.0f)
 					{
 						cmdBindPipeline(cmd, pPipelineHairLocalConstraints);
-
-						hairParams[0].pName = "cbSimulation";
-						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-						hairParams[1].pName = "HairVertexPositions";
-						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-						hairParams[2].pName = "HairGlobalRotations";
-						hairParams[2].ppBuffers = &gHair[k].pBufferHairGlobalRotations;
-						hairParams[3].pName = "HairRefsInLocalFrame";
-						hairParams[3].ppBuffers = &gHair[k].pBufferHairRefsInLocalFrame;
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairLocalConstraints, 4, hairParams);
+						cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairLocalConstraints);
 
 						for (int j = 0; j < 3; ++j)
 						{
 							bufferBarriers[j].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[j];
-							bufferBarriers[j].mNewState = gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
+							bufferBarriers[j].mNewState = (ResourceState)gHair[k].pBufferHairSimulationVertexPositions[j]->mCurrentState;
 						}
 
 						for (int j = 0; j < (int)gHair[k].mUniformDataHairSimulation.mLocalConstraintIterations; ++j)
 						{
 							cmdDispatch(cmd, dispatchGroupCountPerStrand, 1, 1);
-							cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, false);
+							cmdResourceBarrier(cmd, 3, bufferBarriers, 0, NULL, 0, NULL);
 						}
 					}
 
@@ -1803,33 +1583,16 @@ class MaterialPlayground: public IApp
 
 					bufferBarriers[0].pBuffer = gHair[k].pBufferHairVertexTangents;
 					bufferBarriers[0].mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
-					cmdResourceBarrier(cmd, 1, bufferBarriers, 0, NULL, false);
+					cmdResourceBarrier(cmd, 1, bufferBarriers, 0, NULL, 0, NULL);
 
-					hairParams[0].pName = "cbSimulation";
-					hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-					hairParams[1].pName = "HairVertexPositions";
-					hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-					hairParams[2].pName = "HairVertexTangents";
-					hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
-					hairParams[3].pName = "HairRestLengths";
-					hairParams[3].ppBuffers = &gHair[k].pBufferHairRestLenghts;
-					hairParams[4].pName = "cbHairGlobal";
-					hairParams[4].ppBuffers = &pUniformBufferHairGlobal;
-#if HAIR_MAX_CAPSULE_COUNT > 0
-					hairParams[5].pName = "HairVertexPositionsPrev";
-					hairParams[5].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairLengthConstraints, 6, hairParams);
-#else
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairLengthConstraints, 5, hairParams);
-#endif
-
+					cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairLengthConstraints);
 					cmdDispatch(cmd, dispatchGroupCountPerVertex, 1, 1);
 
 					bufferBarriers[0].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[0];
 					bufferBarriers[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
 					bufferBarriers[1].pBuffer = gHair[k].pBufferHairVertexTangents;
 					bufferBarriers[1].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-					cmdResourceBarrier(cmd, 2, bufferBarriers, 0, NULL, false);
+					cmdResourceBarrier(cmd, 2, bufferBarriers, 0, NULL, 0, NULL);
 
 					// Update follow hairs
 					if (gHair[k].mUniformDataHairSimulation.mNumFollowHairsPerGuideHair > 0)
@@ -1838,205 +1601,190 @@ class MaterialPlayground: public IApp
 
 						bufferBarriers[0].pBuffer = gHair[k].pBufferHairVertexTangents;
 						bufferBarriers[0].mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
-						cmdResourceBarrier(cmd, 1, bufferBarriers, 0, NULL, false);
+						cmdResourceBarrier(cmd, 1, bufferBarriers, 0, NULL, 0, NULL);
 
-						hairParams[0].pName = "cbSimulation";
-						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[gFrameIndex];
-						hairParams[1].pName = "HairVertexPositions";
-						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-						hairParams[2].pName = "HairVertexTangents";
-						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
-						hairParams[3].pName = "FollowHairRootOffsets";
-						hairParams[3].ppBuffers = &gHair[k].pBufferFollowHairRootOffsets;
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairUpdateFollowHairs, 4, hairParams);
-
+						cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairFollowHairs);
 						cmdDispatch(cmd, dispatchGroupCountPerVertex, 1, 1);
 
 						bufferBarriers[0].pBuffer = gHair[k].pBufferHairSimulationVertexPositions[0];
 						bufferBarriers[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
 						bufferBarriers[1].pBuffer = gHair[k].pBufferHairVertexTangents;
 						bufferBarriers[1].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-						cmdResourceBarrier(cmd, 2, bufferBarriers, 0, NULL, false);
+						cmdResourceBarrier(cmd, 2, bufferBarriers, 0, NULL, 0, NULL);
 					}
+
+					++descriptorSetIndex;
 				}
 
 				gHairTypeInfo[hairType].mPreWarm = false;
 			}
-			cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 			// Draw hair - shadow map
-			cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Hair rendering", true);
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair rendering");
 
+			uint32_t shadowDescriptorSetIndex[2] =
+			{
+				gFrameIndex * MAX_NUM_DIRECTIONAL_LIGHTS * HAIR_TYPE_COUNT,
+				gFrameIndex * gHairDynamicDescriptorSetCount * MAX_NUM_DIRECTIONAL_LIGHTS
+			};
 			TextureBarrier textureBarriers[2] = {};
+#if defined(METAL)
 			BufferBarrier  bufferBarrier[1] = {};
+#endif
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair shadow");
+
 			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
 				if (!gHairTypeInfo[hairType].mInView)
+				{
+					shadowDescriptorSetIndex[0] += MAX_NUM_DIRECTIONAL_LIGHTS;
+					shadowDescriptorSetIndex[1] += MAX_NUM_DIRECTIONAL_LIGHTS * (uint32_t)gHairTypeIndices[hairType].size();
 					continue;
+				}
 
 				for (int i = 0; i < MAX_NUM_DIRECTIONAL_LIGHTS; ++i)
 				{
-					cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+					cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 					textureBarriers[0].pTexture = pRenderTargetHairShadows[hairType][i]->pTexture;
 					textureBarriers[0].mNewState = RESOURCE_STATE_DEPTH_WRITE;
-					cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+					cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 
 					loadActions.mLoadActionsColor[0] = LOAD_ACTION_DONTCARE;
 					loadActions.mLoadActionDepth = LOAD_ACTION_CLEAR;
-					loadActions.mClearDepth = pRenderTargetHairShadows[hairType][i]->mDesc.mClearValue;
+					loadActions.mClearDepth = pRenderTargetHairShadows[hairType][i]->mClearValue;
 
-					cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetHairShadows[hairType][i], &loadActions, NULL, NULL, 0, 0);
+					cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetHairShadows[hairType][i], &loadActions, NULL, NULL, -1, -1);
 					cmdSetViewport(
-						cmd, 0.0f, 0.0f, (float)pRenderTargetHairShadows[hairType][i]->mDesc.mWidth,
-						(float)pRenderTargetHairShadows[hairType][i]->mDesc.mHeight, 0.0f, 1.0f);
+						cmd, 0.0f, 0.0f, (float)pRenderTargetHairShadows[hairType][i]->mWidth,
+						(float)pRenderTargetHairShadows[hairType][i]->mHeight, 0.0f, 1.0f);
 					cmdSetScissor(
-						cmd, 0, 0, pRenderTargetHairShadows[hairType][i]->mDesc.mWidth,
-						pRenderTargetHairShadows[hairType][i]->mDesc.mHeight);
+						cmd, 0, 0, pRenderTargetHairShadows[hairType][i]->mWidth,
+						pRenderTargetHairShadows[hairType][i]->mHeight);
 
 					cmdBindPipeline(cmd, pPipelineHairShadow);
-					hairParams[0].pName = "cbCamera";
-					hairParams[0].ppBuffers = &pUniformBufferCameraHairShadows[gFrameIndex][hairType][i];
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairShadow, 1, hairParams);
+					cmdBindDescriptorSet(cmd, shadowDescriptorSetIndex[0], pDescriptorSetHairShadow[0]);
 
 					for (size_t j = 0; j < gHairTypeIndices[hairType].size(); ++j)
 					{
 						uint k = gHairTypeIndices[hairType][j];
 
-						hairParams[0].pName = "cbHair";
-						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[gFrameIndex];
-						hairParams[1].pName = "GuideHairVertexPositions";
-						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-						hairParams[2].pName = "GuideHairVertexTangents";
-						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
-						hairParams[3].pName = "HairThicknessCoefficients";
-						hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairShadow, 4, hairParams);
-
-						cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, 0);
+						cmdBindDescriptorSet(cmd, shadowDescriptorSetIndex[1], pDescriptorSetHairShadow[1]);
+						cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, gHair[k].pGeom->mIndexType, 0);
 						cmdDrawIndexed(cmd, gHair[k].mIndexCountHair, 0, 0);
+
+						++shadowDescriptorSetIndex[1];
 					}
+
+					++shadowDescriptorSetIndex[0];
 				}
 			}
 
 			// Draw hair - clear hair depths texture
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 #ifndef METAL
 			textureBarriers[0].pTexture = pTextureHairDepth;
 			textureBarriers[0].mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
-			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 #else
 			bufferBarrier[0].pBuffer = pBufferHairDepth;
 			bufferBarrier[0].mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
-			cmdResourceBarrier(cmd, 1, bufferBarrier, 0, NULL, false);
+			cmdResourceBarrier(cmd, 1, bufferBarrier, 0, NULL, 0, NULL);
 #endif
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair clear");
 
 			loadActions.mLoadActionDepth = LOAD_ACTION_LOAD;
-			cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetDepth, &loadActions, NULL, NULL, 0, 0);
-			cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-			cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+			cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
+			cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+			cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 			cmdBindPipeline(cmd, pPipelineHairClear);
-			hairParams[0].pName = "DepthsTexture";
-#ifndef METAL
-			hairParams[0].ppTextures = &pTextureHairDepth;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairClear, 1, hairParams);
-#else
-			hairParams[0].ppBuffers = &pBufferHairDepth;
-			hairParams[1].pName = "cbHairGlobal";
-			hairParams[1].ppBuffers = &pUniformBufferHairGlobal;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairClear, 2, hairParams);
-#endif
-
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetHairClear);
 			cmdDraw(cmd, 3, 0);
 
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair depth peeling");
 
 			// Draw hair - depth peeling and alpha accumulaiton
 			textureBarriers[0].pTexture = pRenderTargetDepthPeeling->pTexture;
 			textureBarriers[0].mNewState = RESOURCE_STATE_RENDER_TARGET;
-			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 
 			loadActions.mLoadActionsColor[0] = LOAD_ACTION_CLEAR;
-			loadActions.mClearColorValues[0] = pRenderTargetDepthPeeling->mDesc.mClearValue;
+			loadActions.mClearColorValues[0] = pRenderTargetDepthPeeling->mClearValue;
 			loadActions.mLoadActionDepth = LOAD_ACTION_LOAD;
 
-			cmdBindRenderTargets(cmd, 1, &pRenderTargetDepthPeeling, pRenderTargetDepth, &loadActions, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 1, &pRenderTargetDepthPeeling, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
 			cmdSetViewport(
-				cmd, 0.0f, 0.0f, (float)pRenderTargetDepthPeeling->mDesc.mWidth, (float)pRenderTargetDepthPeeling->mDesc.mHeight, 0.0f,
+				cmd, 0.0f, 0.0f, (float)pRenderTargetDepthPeeling->mWidth, (float)pRenderTargetDepthPeeling->mHeight, 0.0f,
 				1.0f);
-			cmdSetScissor(cmd, 0, 0, pRenderTargetDepthPeeling->mDesc.mWidth, pRenderTargetDepthPeeling->mDesc.mHeight);
+			cmdSetScissor(cmd, 0, 0, pRenderTargetDepthPeeling->mWidth, pRenderTargetDepthPeeling->mHeight);
 
 			cmdBindPipeline(cmd, pPipelineHairDepthPeeling);
-			hairParams[0].pName = "cbCamera";
-			hairParams[0].ppBuffers = &pUniformBufferCamera[gFrameIndex];
-			hairParams[1].pName = "DepthsTexture";
-#ifndef METAL
-			hairParams[1].ppTextures = &pTextureHairDepth;
-#else
-			hairParams[1].ppBuffers = &pBufferHairDepth;
-#endif
-			hairParams[2].pName = "cbHairGlobal";
-			hairParams[2].ppBuffers = &pUniformBufferHairGlobal;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairDepthPeeling, 3, hairParams);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetHairDepthPeeling[0]);
+			cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetHairDepthPeeling[1]);
 
-			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
+			descriptorSetIndex = gFrameIndex * gHairDynamicDescriptorSetCount;
+
+			for (uint32_t hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
 				if (!gHairTypeInfo[hairType].mInView)
+				{
+					descriptorSetIndex += (uint32_t)gHairTypeIndices[hairType].size();
 					continue;
+				}
 
 				for (size_t i = 0; i < gHairTypeIndices[hairType].size(); ++i)
 				{
-					uint k = gHairTypeIndices[hairType][i];
-
-					hairParams[0].pName = "cbHair";
-					hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[gFrameIndex];
-					hairParams[1].pName = "GuideHairVertexPositions";
-					hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-					hairParams[2].pName = "GuideHairVertexTangents";
-					hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
-					hairParams[3].pName = "HairThicknessCoefficients";
-					hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairDepthPeeling, 4, hairParams);
-
-					cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, 0);
+					uint32_t k = gHairTypeIndices[hairType][i];
+					cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairDepthPeeling[2]);
+					cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, gHair[k].pGeom->mIndexType, 0);
 					cmdDrawIndexed(cmd, gHair[k].mIndexCountHair, 0, 0);
+
+					++descriptorSetIndex;
 				}
 			}
 
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair depth resolve");
 
 			// Draw hair - depth resolve
 #ifndef METAL
 			textureBarriers[0].pTexture = pTextureHairDepth;
 			textureBarriers[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 #else
 			bufferBarrier[0].pBuffer = pBufferHairDepth;
 			bufferBarrier[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-			cmdResourceBarrier(cmd, 1, bufferBarrier, 0, NULL, false);
+			cmdResourceBarrier(cmd, 1, bufferBarrier, 0, NULL, 0, NULL);
 #endif
 
-			cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetDepth, &loadActions, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
 			cmdBindPipeline(cmd, pPipelineHairDepthResolve);
-			hairParams[0].pName = "DepthsTexture";
-#ifndef METAL
-			hairParams[0].ppTextures = &pTextureHairDepth;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairDepthResolve, 1, hairParams);
-#else
-			hairParams[0].ppBuffers = &pBufferHairDepth;
-			hairParams[1].pName = "cbHairGlobal";
-			hairParams[1].ppBuffers = &pUniformBufferHairGlobal;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairDepthResolve, 2, hairParams);
-#endif
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetHairDepthResolve);
 			cmdDraw(cmd, 3, 0);
 
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair fill colors");
 
 			// Draw hair - fill colors
 			textureBarriers[0].pTexture = pRenderTargetFillColors->pTexture;
 			textureBarriers[0].mNewState = RESOURCE_STATE_RENDER_TARGET;
-			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+			cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 
 			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
@@ -2047,117 +1795,95 @@ class MaterialPlayground: public IApp
 				{
 					textureBarriers[0].pTexture = pRenderTargetHairShadows[hairType][i]->pTexture;
 					textureBarriers[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-					cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, false);
+					cmdResourceBarrier(cmd, 0, NULL, 1, textureBarriers, 0, NULL);
 				}
 			}
 
-			loadActions.mClearColorValues[0] = pRenderTargetFillColors->mDesc.mClearValue;
+			loadActions.mClearColorValues[0] = pRenderTargetFillColors->mClearValue;
 
-			cmdBindRenderTargets(cmd, 1, &pRenderTargetFillColors, pRenderTargetDepth, &loadActions, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 1, &pRenderTargetFillColors, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
 			cmdSetViewport(
-				cmd, 0.0f, 0.0f, (float)pRenderTargetFillColors->mDesc.mWidth, (float)pRenderTargetFillColors->mDesc.mHeight, 0.0f, 1.0f);
-			cmdSetScissor(cmd, 0, 0, pRenderTargetFillColors->mDesc.mWidth, pRenderTargetFillColors->mDesc.mHeight);
+				cmd, 0.0f, 0.0f, (float)pRenderTargetFillColors->mWidth, (float)pRenderTargetFillColors->mHeight, 0.0f, 1.0f);
+			cmdSetScissor(cmd, 0, 0, pRenderTargetFillColors->mWidth, pRenderTargetFillColors->mHeight);
 
 			cmdBindPipeline(cmd, pPipelineHairFillColors);
-			hairParams[0].pName = "cbCamera";
-			hairParams[0].ppBuffers = &pUniformBufferCamera[gFrameIndex];
-			hairParams[1].pName = "cbPointLights";
-			hairParams[1].ppBuffers = &pUniformBufferPointLights;
-			hairParams[2].pName = "cbDirectionalLights";
-			hairParams[2].ppBuffers = &pUniformBufferDirectionalLights;
-			hairParams[3].pName = "cbHairGlobal";
-			hairParams[3].ppBuffers = &pUniformBufferHairGlobal;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairFillColors, 4, hairParams);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetHairFillColors[0]);
+			cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetHairFillColors[1]);
 
-			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
+			descriptorSetIndex = gFrameIndex * gHairDynamicDescriptorSetCount;
+
+			for (uint32_t hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
 				if (!gHairTypeInfo[hairType].mInView)
+				{
+					descriptorSetIndex += (uint32_t)gHairTypeIndices[hairType].size();
 					continue;
+				}
 
-				Texture* ppShadowMaps[MAX_NUM_DIRECTIONAL_LIGHTS] = {};
-				for (int i = 0; i < MAX_NUM_DIRECTIONAL_LIGHTS; ++i)
-					ppShadowMaps[i] = pRenderTargetHairShadows[hairType][i]->pTexture;
-
-				hairParams[0].pName = "DirectionalLightShadowMaps";
-				hairParams[0].ppTextures = ppShadowMaps;
-				hairParams[0].mCount = MAX_NUM_DIRECTIONAL_LIGHTS;
-				hairParams[1].pName = "cbDirectionalLightShadowCameras";
-				hairParams[1].ppBuffers = pUniformBufferCameraHairShadows[gFrameIndex][hairType];
-				hairParams[1].mCount = MAX_NUM_DIRECTIONAL_LIGHTS;
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairFillColors, 2, hairParams);
+				cmdBindDescriptorSet(cmd, gFrameIndex * HAIR_TYPE_COUNT + hairType, pDescriptorSetHairFillColors[2]);
 
 				for (size_t i = 0; i < gHairTypeIndices[hairType].size(); ++i)
 				{
-					uint k = gHairTypeIndices[hairType][i];
+					uint32_t k = gHairTypeIndices[hairType][i];
 
-					hairParams[0].pName = "cbHair";
-					hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[gFrameIndex];
-					hairParams[1].pName = "GuideHairVertexPositions";
-					hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
-					hairParams[2].pName = "GuideHairVertexTangents";
-					hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
-					hairParams[3].pName = "HairThicknessCoefficients";
-					hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
-					cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairFillColors, 4, hairParams);
-
-					cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, 0);
+					cmdBindDescriptorSet(cmd, descriptorSetIndex, pDescriptorSetHairFillColors[3]);
+					cmdBindIndexBuffer(cmd, gHair[k].pBufferTriangleIndices, gHair[k].pGeom->mIndexType, 0);
 					cmdDrawIndexed(cmd, gHair[k].mIndexCountHair, 0, 0);
+
+					++descriptorSetIndex;
 				}
 			}
 
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
+
+			cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Hair resolve colors");
 
 			// Draw hair - color resolve
 			textureBarriers[0].pTexture = pRenderTargetFillColors->pTexture;
 			textureBarriers[0].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
 			textureBarriers[1].pTexture = pRenderTargetDepthPeeling->pTexture;
 			textureBarriers[1].mNewState = RESOURCE_STATE_SHADER_RESOURCE;
-			cmdResourceBarrier(cmd, 0, NULL, 2, textureBarriers, false);
+			cmdResourceBarrier(cmd, 0, NULL, 2, textureBarriers, 0, NULL);
 
 			loadActions.mLoadActionsColor[0] = LOAD_ACTION_LOAD;
 
 			cmdBindRenderTargets(cmd, 1, &pRenderTarget, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
-			cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-			cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+			cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+			cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 			cmdBindPipeline(cmd, pPipelineHairColorResolve);
-			hairParams[0].pName = "ColorsTexture";
-			hairParams[0].ppTextures = &pRenderTargetFillColors->pTexture;
-			hairParams[1].pName = "InvAlphaTexture";
-			hairParams[1].ppTextures = &pRenderTargetDepthPeeling->pTexture;
-			cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureHairColorResolve, 2, hairParams);
+			cmdBindDescriptorSet(cmd, 0, pDescriptorSetHairColorResolve);
 			cmdDraw(cmd, 3, 0);
 
-			cmdEndGpuTimestampQuery(cmd, pGpuProfiler);
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
+
+			cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);
 
 #if HAIR_MAX_CAPSULE_COUNT > 0
 			if (gShowCapsules)
 			{
 				cmdBindRenderTargets(cmd, 1, &pRenderTarget, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
-				cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-				cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
-
-				cmdBindVertexBuffer(cmd, 1, &pMeshes[MESH_CAPSULE]->pVertexBuffer, NULL);
-				cmdBindIndexBuffer(cmd, pMeshes[MESH_CAPSULE]->pIndexBuffer, 0);
+				cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+				cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 				cmdBindPipeline(cmd, pPipelineShowCapsules);
-				hairParams[0].pName = "cbCamera";
-				hairParams[0].ppBuffers = &pUniformBufferCamera[gFrameIndex];
-				cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShowCapsules, 1, hairParams);
+				cmdBindVertexBuffer(cmd, 1, &gMeshes[MESH_CAPSULE]->pVertexBuffers[0], &gMeshes[MESH_CAPSULE]->mVertexStrides[0], NULL);
+				cmdBindIndexBuffer(cmd, gMeshes[MESH_CAPSULE]->pIndexBuffer, gMeshes[MESH_CAPSULE]->mIndexType, 0);
+				cmdBindDescriptorSet(cmd, gFrameIndex, pDescriptorSetShowCapsule);
 
 				for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 				{
 					for (size_t i = 0; i < gCapsules.size(); ++i)
 					{
-						hairParams[0].pName = "CapsuleRootConstant";
-						hairParams[0].pRootConstant = &gFinalCapsules[hairType][i];
-						cmdBindDescriptors(cmd, pDescriptorBinder, pRootSignatureShowCapsules, 1, hairParams);
-						cmdDrawIndexed(cmd, pMeshes[MESH_CAPSULE]->mIndexCount, 0, 0);
+						cmdBindPushConstants(cmd, pRootSignatureShowCapsules, "CapsuleRootConstant", &gFinalCapsules[hairType][i]);
+						cmdDrawIndexed(cmd, gMeshes[MESH_CAPSULE]->mIndexCount, 0, 0);
 					}
 				}
 			}
 #endif
-			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, 0, 0);
+			cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
 
 			gFirstHairSimulationFrame = false;
 		}
@@ -2175,11 +1901,11 @@ class MaterialPlayground: public IApp
 		loadActions.mLoadActionDepth = LOAD_ACTION_LOAD;
 
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, pRenderTargetDepth, &loadActions, NULL, NULL, -1, -1);
-		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mDesc.mWidth, (float)pRenderTarget->mDesc.mHeight, 0.0f, 1.0f);
-		cmdSetScissor(cmd, 0, 0, pRenderTarget->mDesc.mWidth, pRenderTarget->mDesc.mHeight);
+		cmdSetViewport(cmd, 0.0f, 0.0f, (float)pRenderTarget->mWidth, (float)pRenderTarget->mHeight, 0.0f, 1.0f);
+		cmdSetScissor(cmd, 0, 0, pRenderTarget->mWidth, pRenderTarget->mHeight);
 
 		// draw world-space text
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "Text", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "Text");
 		const char** ppMaterialNames = NULL;
 		switch (GuiController::currentMaterialType)
 		{
@@ -2209,109 +1935,63 @@ class MaterialPlayground: public IApp
 		loadActions.mLoadActionsColor[0] = LOAD_ACTION_LOAD;
 		cmdBindRenderTargets(cmd, 1, &pRenderTarget, NULL, &loadActions, NULL, NULL, -1, -1);
 
-		static HiresTimer gTimer;
-		gTimer.GetUSec(true);
-
-#ifdef TARGET_IOS
 		gVirtualJoystick.Draw(cmd, { 1.0f, 1.0f, 1.0f, 1.0f });
-#endif
 
 		// draw HUD text
-		gAppUI.DrawText(
-			cmd, float2(8, 15), eastl::string().sprintf("CPU %f ms", gTimer.GetUSecAverage() / 1000.0f).c_str(), &gFrameTimeDraw);
-#ifndef METAL    // Metal doesn't support GPU profilers
-		gAppUI.DrawText(
-			cmd, float2(8, 40), eastl::string().sprintf("GPU %f ms", (float)pGpuProfiler->mCumulativeTime * 1000.0f).c_str(),
-			&gFrameTimeDraw);
-		gAppUI.DrawDebugGpuProfile(cmd, float2(8.0f, 90.0f), pGpuProfiler, NULL);
-#endif
+        cmdDrawCpuProfile(cmd, float2(8, 15), &gFrameTimeDraw);
+		cmdDrawGpuProfile(cmd, float2(8.0f, 40.0f), gGpuProfileToken, &gFrameTimeDraw);
 
 		if (!gbLuaScriptingSystemLoadedSuccessfully)
 		{
 			gAppUI.DrawText(cmd, float2(8, 75), "Error loading LUA scripts!", &gErrMsgDrawDesc);
 		}
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);	// HUD Text
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);	// HUD Text
 
 
-		cmdBeginGpuTimestampQuery(cmd, pGpuProfiler, "UI", true);
+		cmdBeginGpuTimestampQuery(cmd, gGpuProfileToken, "UI");
 		gAppUI.Gui(pGuiWindowMain);
 		if (GuiController::currentMaterialType == MATERIAL_HAIR)
 			gAppUI.Gui(pGuiWindowHairSimulation);
 		else
 			gAppUI.Gui(pGuiWindowMaterial);
 
-		cmdDrawProfiler(cmd);
+		cmdDrawProfilerUI();
 
 		gAppUI.Draw(cmd);
-		cmdEndGpuTimestampQuery(cmd, pGpuProfiler);	// UI
+		cmdBindRenderTargets(cmd, 0, NULL, NULL, NULL, NULL, NULL, -1, -1);
+		cmdEndGpuTimestampQuery(cmd, gGpuProfileToken);	// UI
 
 		// PRESENT THE GFX QUEUE
 		//
 		// Transition our texture to present state
-		barriers[0] = { pRenderTarget->pTexture, RESOURCE_STATE_PRESENT };
-		cmdResourceBarrier(cmd, 0, NULL, 1, barriers, true);
-		cmdEndGpuFrameProfile(cmd, pGpuProfiler);
+		barriers[0] = { pRenderTarget, RESOURCE_STATE_PRESENT };
+		cmdResourceBarrier(cmd, 0, NULL, 0, NULL, 1, barriers);
+		cmdEndGpuFrameProfile(cmd, gGpuProfileToken);
 		endCmd(cmd);
 		allCmds.push_back(cmd);
 
-		queueSubmit(
-			pGraphicsQueue, (uint32_t)allCmds.size(), allCmds.data(), pRenderCompleteFence, 1, &pImageAcquiredSemaphore, 1,
-			&pRenderCompleteSemaphore);
-		queuePresent(pGraphicsQueue, pSwapChain, gFrameIndex, 1, &pRenderCompleteSemaphore);
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = (uint32_t)allCmds.size();
+		submitDesc.mSignalSemaphoreCount = 1;
+		submitDesc.mWaitSemaphoreCount = 1;
+		submitDesc.ppCmds = allCmds.data();
+		submitDesc.ppSignalSemaphores = &pRenderCompleteSemaphore;
+		submitDesc.ppWaitSemaphores = &pImageAcquiredSemaphore;
+		submitDesc.pSignalFence = pRenderCompleteFence;
+		queueSubmit(pGraphicsQueue, &submitDesc);
+		QueuePresentDesc presentDesc = {};
+		presentDesc.mIndex = gFrameIndex;
+		presentDesc.mWaitSemaphoreCount = 1;
+		presentDesc.ppWaitSemaphores = &pRenderCompleteSemaphore;
+		presentDesc.pSwapChain = pSwapChain;
+		presentDesc.mSubmitDone = true;
+		queuePresent(pGraphicsQueue, &presentDesc);
 		flipProfiler();
 	}
 
 	const char* GetName() { return "06_MaterialPlayground"; }
 
-	void RecenterCameraView(float maxDistance, vec3 lookAt = vec3(0))
-	{
-		vec3 p = pCameraController->getViewPosition();
-		vec3 d = p - lookAt;
-
-		float lenSqr = lengthSqr(d);
-		if (lenSqr > (maxDistance * maxDistance))
-		{
-			d *= (maxDistance / sqrtf(lenSqr));
-		}
-
-		p = d + lookAt;
-		pCameraController->moveTo(p);
-		pCameraController->lookAt(lookAt);
-	}
-
-	static bool cameraInputEvent(const ButtonData* data)
-	{
-		pCameraController->onInputEvent(data);
-		return true;
-	}
-	static bool pFnInputEvent(const ButtonData* data)
-	{
-		// Handle Keyboard Events
-		if (data->mActiveDevicesMask == GAINPUT_KEYBOARD && data->mIsTriggered)
-		{
-			switch (data->mCharacter)
-			{
-			case '1': gMaterialType = MATERIAL_METAL;	break;
-			case '2': gMaterialType = MATERIAL_WOOD;	break;
-			case '3': gMaterialType = MATERIAL_HAIR;	break;
-			case 'c': gbAnimateCamera = !gbAnimateCamera; break;
-			case 'v': gDrawSkybox = !gDrawSkybox; break;
-			case 'b': gEnvironmentLighting = !gEnvironmentLighting; break;
-
-			// shift + number combinations (works for US keyboard layout)
-			case '!': gRenderMode = 0; break; // Key 1
-			case '@': gRenderMode = 1; break; // Key 2
-			case '#': gRenderMode = 2; break; // Key 3
-			case '$': gRenderMode = 3; break; // Key 4
-			case '%': gRenderMode = 4; break; // Key 5
-			case '^': gRenderMode = 5; break; // Key 6
-			default:
-				break;
-			}
-		}
-		return true;
-	}
-
+#if !defined(DIRECT3D11)
 	void GetCorrectedBoneTranformation(uint rigIndex, uint boneIndex, mat4* boneMatrix, mat3* boneRotation)
 	{
 		(*boneMatrix) = gAnimationRig[rigIndex].GetJointWorldMat(boneIndex);
@@ -2335,121 +2015,10 @@ class MaterialPlayground: public IApp
 		// Create new bone matrix without scale, with fixed rotations
 		(*boneMatrix) = mat4((*boneRotation), bonePosition);
 	}
-
+#endif
 	//--------------------------------------------------------------------------------------------
 	// INIT FUNCTIONS
 	//--------------------------------------------------------------------------------------------
-	void CreateRasterizerStates()
-	{
-		RasterizerStateDesc rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_NONE;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRasterizerStateCullNone);
-
-		rasterizerStateDesc = {};
-		rasterizerStateDesc.mCullMode = CULL_MODE_BACK;
-		addRasterizerState(pRenderer, &rasterizerStateDesc, &pRasterizerStateCullFront);
-	}
-
-	void DestroyRasterizerStates()
-	{
-		removeRasterizerState(pRasterizerStateCullNone);
-		removeRasterizerState(pRasterizerStateCullFront);
-	}
-
-	void CreateDepthStates()
-	{
-		DepthStateDesc depthStateDesc = {};
-		depthStateDesc.mDepthTest = true;
-		depthStateDesc.mDepthWrite = true;
-		depthStateDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateDesc, &pDepthStateEnable);
-
-		DepthStateDesc depthStateDisableDesc = {};
-		depthStateDisableDesc.mDepthTest = false;
-		depthStateDisableDesc.mDepthWrite = false;
-		depthStateDisableDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateDisableDesc, &pDepthStateDisable);
-
-		DepthStateDesc depthStateNoWriteDesc = {};
-		depthStateNoWriteDesc.mDepthTest = true;
-		depthStateNoWriteDesc.mDepthWrite = false;
-		depthStateNoWriteDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateNoWriteDesc, &pDepthStateNoWrite);
-
-		DepthStateDesc depthStateDepthResolveDesc = {};
-		depthStateDepthResolveDesc.mDepthTest = true;
-		depthStateDepthResolveDesc.mDepthWrite = true;
-		depthStateDepthResolveDesc.mDepthFunc = CMP_LEQUAL;
-		addDepthState(pRenderer, &depthStateDepthResolveDesc, &pDepthStateDepthResolve);
-	}
-
-	void DestroyDepthStates()
-	{
-		removeDepthState(pDepthStateEnable);
-		removeDepthState(pDepthStateDisable);
-		removeDepthState(pDepthStateNoWrite);
-		removeDepthState(pDepthStateDepthResolve);
-	}
-
-	void CreateBlendStates()
-	{
-		BlendStateDesc blendStateDesc = {};
-		blendStateDesc.mSrcFactors[0] = BC_SRC_ALPHA;
-		blendStateDesc.mDstFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
-		blendStateDesc.mBlendModes[0] = BM_ADD;
-		blendStateDesc.mSrcAlphaFactors[0] = BC_ONE;
-		blendStateDesc.mDstAlphaFactors[0] = BC_ZERO;
-		blendStateDesc.mBlendAlphaModes[0] = BM_ADD;
-		blendStateDesc.mMasks[0] = ALL;
-		blendStateDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
-		blendStateDesc.mIndependentBlend = false;
-		addBlendState(pRenderer, &blendStateDesc, &pBlendStateAlphaBlend);
-
-		BlendStateDesc blendStateDepthPeelingDesc = {};
-		blendStateDepthPeelingDesc.mSrcFactors[0] = BC_ZERO;
-		blendStateDepthPeelingDesc.mDstFactors[0] = BC_SRC_COLOR;
-		blendStateDepthPeelingDesc.mBlendModes[0] = BM_ADD;
-		blendStateDepthPeelingDesc.mSrcAlphaFactors[0] = BC_ZERO;
-		blendStateDepthPeelingDesc.mDstAlphaFactors[0] = BC_SRC_ALPHA;
-		blendStateDepthPeelingDesc.mBlendAlphaModes[0] = BM_ADD;
-		blendStateDepthPeelingDesc.mMasks[0] = RED;
-		blendStateDepthPeelingDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
-		blendStateDepthPeelingDesc.mIndependentBlend = false;
-		addBlendState(pRenderer, &blendStateDepthPeelingDesc, &pBlendStateDepthPeeling);
-
-		BlendStateDesc blendStateAddDesc = {};
-		blendStateAddDesc.mSrcFactors[0] = BC_ONE;
-		blendStateAddDesc.mDstFactors[0] = BC_ONE;
-		blendStateAddDesc.mBlendModes[0] = BM_ADD;
-		blendStateAddDesc.mSrcAlphaFactors[0] = BC_ONE;
-		blendStateAddDesc.mDstAlphaFactors[0] = BC_ONE;
-		blendStateAddDesc.mBlendAlphaModes[0] = BM_ADD;
-		blendStateAddDesc.mMasks[0] = ALL;
-		blendStateAddDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
-		blendStateAddDesc.mIndependentBlend = false;
-		addBlendState(pRenderer, &blendStateAddDesc, &pBlendStateAdd);
-
-		BlendStateDesc blendStateColorResolveDesc = {};
-		blendStateColorResolveDesc.mSrcFactors[0] = BC_ONE;
-		blendStateColorResolveDesc.mDstFactors[0] = BC_SRC_ALPHA;
-		blendStateColorResolveDesc.mBlendModes[0] = BM_ADD;
-		blendStateColorResolveDesc.mSrcAlphaFactors[0] = BC_ZERO;
-		blendStateColorResolveDesc.mDstAlphaFactors[0] = BC_ZERO;
-		blendStateColorResolveDesc.mBlendAlphaModes[0] = BM_ADD;
-		blendStateColorResolveDesc.mMasks[0] = ALL;
-		blendStateColorResolveDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
-		blendStateColorResolveDesc.mIndependentBlend = false;
-		addBlendState(pRenderer, &blendStateColorResolveDesc, &pBlendStateColorResolve);
-	}
-
-	void DestroyBlendStates()
-	{
-		removeBlendState(pBlendStateAlphaBlend);
-		removeBlendState(pBlendStateDepthPeeling);
-		removeBlendState(pBlendStateAdd);
-		removeBlendState(pBlendStateColorResolve);
-	}
-
 	void CreateSamplers()
 	{
 		SamplerDesc bilinearSamplerDesc = {};
@@ -2489,106 +2058,110 @@ class MaterialPlayground: public IApp
 
 	void CreateShaders()
 	{
-		ShaderMacro pointLightsShaderMacro = { "MAX_NUM_POINT_LIGHTS", eastl::string().sprintf("%i", MAX_NUM_POINT_LIGHTS) };
-		ShaderMacro directionalLightsShaderMacro = { "MAX_NUM_DIRECTIONAL_LIGHTS",
-													 eastl::string().sprintf("%i", MAX_NUM_DIRECTIONAL_LIGHTS) };
+		char pointLightsShaderMacroBuffer[4] = {}; sprintf(pointLightsShaderMacroBuffer, "%i", MAX_NUM_POINT_LIGHTS);
+		char directionalLightsShaderMacroBuffer[4] = {}; sprintf(directionalLightsShaderMacroBuffer, "%i", MAX_NUM_DIRECTIONAL_LIGHTS);
+
+		ShaderMacro pointLightsShaderMacro = { "MAX_NUM_POINT_LIGHTS", pointLightsShaderMacroBuffer };
+		ShaderMacro directionalLightsShaderMacro = { "MAX_NUM_DIRECTIONAL_LIGHTS", directionalLightsShaderMacroBuffer };
 		ShaderMacro lightMacros[] = { pointLightsShaderMacro, directionalLightsShaderMacro };
 
 		ShaderLoadDesc skyboxShaderDesc = {};
-		skyboxShaderDesc.mStages[0] = { "skybox.vert", NULL, 0, FSR_SrcShaders };
-		skyboxShaderDesc.mStages[1] = { "skybox.frag", NULL, 0, FSR_SrcShaders };
+		skyboxShaderDesc.mStages[0] = { "skybox.vert", NULL, 0, RD_SHADER_SOURCES };
+		skyboxShaderDesc.mStages[1] = { "skybox.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &skyboxShaderDesc, &pShaderSkybox);
 
 		ShaderLoadDesc brdfRenderSceneShaderDesc = {};
-		brdfRenderSceneShaderDesc.mStages[0] = { "renderSceneBRDF.vert", lightMacros, 2, FSR_SrcShaders };
-		brdfRenderSceneShaderDesc.mStages[1] = { "renderSceneBRDF.frag", lightMacros, 2, FSR_SrcShaders };
+		brdfRenderSceneShaderDesc.mStages[0] = { "renderSceneBRDF.vert", lightMacros, 2, RD_SHADER_SOURCES };
+		brdfRenderSceneShaderDesc.mStages[1] = { "renderSceneBRDF.frag", lightMacros, 2, RD_SHADER_SOURCES };
 		addShader(pRenderer, &brdfRenderSceneShaderDesc, &pShaderBRDF);
 
 		ShaderLoadDesc shadowPassShaderDesc = {};
-		shadowPassShaderDesc.mStages[0] = { "renderSceneShadows.vert", NULL, 0, FSR_SrcShaders };
-		shadowPassShaderDesc.mStages[1] = { "renderSceneShadows.frag", NULL, 0, FSR_SrcShaders };
+		shadowPassShaderDesc.mStages[0] = { "renderSceneShadows.vert", NULL, 0, RD_SHADER_SOURCES };
+		shadowPassShaderDesc.mStages[1] = { "renderSceneShadows.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &shadowPassShaderDesc, &pShaderShadowPass);
 
 
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
+		char maxCapsuleCountMacroBuffer[4] = {}; sprintf(maxCapsuleCountMacroBuffer, "%i", HAIR_MAX_CAPSULE_COUNT);
+
 		const uint  macroCount = 4;
-		ShaderMacro shaderMacros[macroCount] = { { "HAIR_MAX_CAPSULE_COUNT", eastl::string().sprintf("%i", HAIR_MAX_CAPSULE_COUNT) } };
+		ShaderMacro shaderMacros[macroCount] = { { "HAIR_MAX_CAPSULE_COUNT", maxCapsuleCountMacroBuffer } };
 		shaderMacros[1] = pointLightsShaderMacro;
 		shaderMacros[2] = directionalLightsShaderMacro;
 		shaderMacros[3] = { "SHORT_CUT_CLEAR", "" };
 		ShaderLoadDesc hairClearShaderDesc = {};
-		hairClearShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairClearShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairClearShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairClearShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairClearShaderDesc, &pShaderHairClear);
 
 		shaderMacros[3] = { "SHORT_CUT_DEPTH_PEELING", "" };
 		ShaderLoadDesc hairDepthPeelingShaderDesc = {};
-		hairDepthPeelingShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairDepthPeelingShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairDepthPeelingShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairDepthPeelingShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairDepthPeelingShaderDesc, &pShaderHairDepthPeeling);
 
 		shaderMacros[3] = { "SHORT_CUT_RESOLVE_DEPTH", "" };
 		ShaderLoadDesc hairDepthResolveShaderDesc = {};
-		hairDepthResolveShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairDepthResolveShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairDepthResolveShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairDepthResolveShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairDepthResolveShaderDesc, &pShaderHairDepthResolve);
 
 		shaderMacros[3] = { "SHORT_CUT_FILL_COLOR", "" };
 		ShaderLoadDesc hairFillColorShaderDesc = {};
-		hairFillColorShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairFillColorShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairFillColorShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairFillColorShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairFillColorShaderDesc, &pShaderHairFillColors);
 
 		shaderMacros[3] = { "SHORT_CUT_RESOLVE_COLOR", "" };
 		ShaderLoadDesc hairColorResolveShaderDesc = {};
-		hairColorResolveShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairColorResolveShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairColorResolveShaderDesc.mStages[0] = { "fullscreen.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairColorResolveShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairColorResolveShaderDesc, &pShaderHairResolveColor);
 
 		shaderMacros[3] = { "HAIR_SHADOW", "" };
 		ShaderLoadDesc hairShadowShaderDesc = {};
-		hairShadowShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, FSR_SrcShaders };
-		hairShadowShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, FSR_SrcShaders };
+		hairShadowShaderDesc.mStages[0] = { "hair.vert", shaderMacros, macroCount, RD_SHADER_SOURCES };
+		hairShadowShaderDesc.mStages[1] = { "hair.frag", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairShadowShaderDesc, &pShaderHairShadow);
 
 		shaderMacros[3] = { "HAIR_INTEGRATE", "" };
 		ShaderLoadDesc hairIntegrateShaderDesc = {};
-		hairIntegrateShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairIntegrateShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairIntegrateShaderDesc, &pShaderHairIntegrate);
 
 		shaderMacros[3] = { "HAIR_SHOCK_PROPAGATION", "" };
 		ShaderLoadDesc hairShockPropagationShaderDesc = {};
-		hairShockPropagationShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairShockPropagationShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairShockPropagationShaderDesc, &pShaderHairShockPropagation);
 
 		shaderMacros[3] = { "HAIR_LOCAL_CONSTRAINTS", "" };
 		ShaderLoadDesc hairLocalConstraintsShaderDesc = {};
-		hairLocalConstraintsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairLocalConstraintsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairLocalConstraintsShaderDesc, &pShaderHairLocalConstraints);
 
 		shaderMacros[3] = { "HAIR_LENGTH_CONSTRAINTS", "" };
 		ShaderLoadDesc hairLengthConstraintsShaderDesc = {};
-		hairLengthConstraintsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairLengthConstraintsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairLengthConstraintsShaderDesc, &pShaderHairLengthConstraints);
 
 		shaderMacros[3] = { "HAIR_UPDATE_FOLLOW_HAIRS", "" };
 		ShaderLoadDesc hairUpdateFollowHairsShaderDesc = {};
-		hairUpdateFollowHairsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairUpdateFollowHairsShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairUpdateFollowHairsShaderDesc, &pShaderHairUpdateFollowHairs);
 
 		shaderMacros[3] = { "HAIR_PRE_WARM", "" };
 		ShaderLoadDesc hairPreWarmShaderDesc = {};
-		hairPreWarmShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, FSR_SrcShaders };
+		hairPreWarmShaderDesc.mStages[0] = { "hair.comp", shaderMacros, macroCount, RD_SHADER_SOURCES };
 		addShader(pRenderer, &hairPreWarmShaderDesc, &pShaderHairPreWarm);
 
 		ShaderLoadDesc showCapsulesShaderDesc = {};
-		showCapsulesShaderDesc.mStages[0] = { "showCapsules.vert", NULL, 0, FSR_SrcShaders };
-		showCapsulesShaderDesc.mStages[1] = { "showCapsules.frag", NULL, 0, FSR_SrcShaders };
+		showCapsulesShaderDesc.mStages[0] = { "showCapsules.vert", NULL, 0, RD_SHADER_SOURCES };
+		showCapsulesShaderDesc.mStages[1] = { "showCapsules.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &showCapsulesShaderDesc, &pShaderShowCapsules);
 
 		ShaderLoadDesc skeletonShaderDesc = {};
-		skeletonShaderDesc.mStages[0] = { "skeleton.vert", NULL, 0, FSR_SrcShaders };
-		skeletonShaderDesc.mStages[1] = { "skeleton.frag", NULL, 0, FSR_SrcShaders };
+		skeletonShaderDesc.mStages[0] = { "skeleton.vert", NULL, 0, RD_SHADER_SOURCES };
+		skeletonShaderDesc.mStages[1] = { "skeleton.frag", NULL, 0, RD_SHADER_SOURCES };
 		addShader(pRenderer, &skeletonShaderDesc, &pShaderSkeleton);
 #endif
 	}
@@ -2598,7 +2171,7 @@ class MaterialPlayground: public IApp
 		removeShader(pRenderer, pShaderBRDF);
 		removeShader(pRenderer, pShaderSkybox);
 		removeShader(pRenderer, pShaderShadowPass);
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		removeShader(pRenderer, pShaderHairClear);
 		removeShader(pRenderer, pShaderHairDepthPeeling);
 		removeShader(pRenderer, pShaderHairDepthResolve);
@@ -2638,13 +2211,14 @@ class MaterialPlayground: public IApp
 		shadowPassRootDesc.mStaticSamplerCount = 0;
 		addRootSignature(pRenderer, &shadowPassRootDesc, &pRootSignatureShadowPass);
 
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		RootSignatureDesc hairClearRootSignatureDesc = {};
 		hairClearRootSignatureDesc.ppShaders = &pShaderHairClear;
 		hairClearRootSignatureDesc.mShaderCount = 1;
 		addRootSignature(pRenderer, &hairClearRootSignatureDesc, &pRootSignatureHairClear);
 
 		RootSignatureDesc hairDepthPeelingRootSignatureDesc = {};
+		hairDepthPeelingRootSignatureDesc.mMaxBindlessTextures = MAX_NUM_DIRECTIONAL_LIGHTS;
 		hairDepthPeelingRootSignatureDesc.ppShaders = &pShaderHairDepthPeeling;
 		hairDepthPeelingRootSignatureDesc.mShaderCount = 1;
 		addRootSignature(pRenderer, &hairDepthPeelingRootSignatureDesc, &pRootSignatureHairDepthPeeling);
@@ -2655,6 +2229,7 @@ class MaterialPlayground: public IApp
 		addRootSignature(pRenderer, &hairResolveDepthRootSignatureDesc, &pRootSignatureHairDepthResolve);
 
 		RootSignatureDesc hairFillColorsRootSignatureDesc = {};
+		hairFillColorsRootSignatureDesc.mMaxBindlessTextures = MAX_NUM_DIRECTIONAL_LIGHTS;
 		hairFillColorsRootSignatureDesc.mStaticSamplerCount = numStaticSamplers;
 		hairFillColorsRootSignatureDesc.ppStaticSamplerNames = pStaticSamplerNames;
 		hairFillColorsRootSignatureDesc.ppStaticSamplers = pStaticSamplers;
@@ -2708,46 +2283,445 @@ class MaterialPlayground: public IApp
 		addRootSignature(pRenderer, &skeletonRootSignatureDesc, &pRootSignatureSkeleton);
 
 		RootSignatureDesc hairShadowRootSignatureDesc = {};
+		hairShadowRootSignatureDesc.mMaxBindlessTextures = MAX_NUM_DIRECTIONAL_LIGHTS;
 		hairShadowRootSignatureDesc.ppShaders = &pShaderHairShadow;
 		hairShadowRootSignatureDesc.mShaderCount = 1;
 		addRootSignature(pRenderer, &hairShadowRootSignatureDesc, &pRootSignatureHairShadow);
 #endif
 	}
 
-	void CreateDescriptorBinders()
+	void CreateDescriptorSets()
 	{
-		uint32_t hairDynamicDescriptorSets = 0;
 		for (uint32_t i = 0; i < HAIR_TYPE_COUNT; i++)
-			hairDynamicDescriptorSets += (uint32_t)gHairTypeIndices[i].size();
+			gHairDynamicDescriptorSetCount += (uint32_t)gHairTypeIndices[i].size();
 
-		DescriptorBinderDesc descriptorBinderDesc[] = {
-			{ pRootSignatureSkybox },
-			{ pRootSignatureBRDF, 1, MATERIAL_INSTANCE_COUNT * 2 + 1 },
-			{ pRootSignatureShadowPass, 4 * MATERIAL_INSTANCE_COUNT },
-#ifndef DIRECT3D11
-			{ pRootSignatureHairClear, 0, hairDynamicDescriptorSets},
-			{ pRootSignatureHairDepthPeeling, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairDepthResolve, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairFillColors, HAIR_TYPE_COUNT, hairDynamicDescriptorSets },
-			{ pRootSignatureHairColorResolve, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairIntegrate, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairShockPropagation, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairLocalConstraints, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairLengthConstraints, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairUpdateFollowHairs, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureHairPreWarm, 0, hairDynamicDescriptorSets },
-			{ pRootSignatureShowCapsules },
-			{ pRootSignatureHairShadow, HAIR_TYPE_COUNT * MAX_NUM_DIRECTIONAL_LIGHTS, hairDynamicDescriptorSets * MAX_NUM_DIRECTIONAL_LIGHTS }
+		DescriptorSetDesc setDesc = { pRootSignatureShadowPass, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetShadow[0]);
+		setDesc = { pRootSignatureShadowPass, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, (1 + MATERIAL_INSTANCE_COUNT) + (gImageCount * MATERIAL_INSTANCE_COUNT) };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetShadow[1]);
+		setDesc = { pRootSignatureSkybox, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSkybox[0]);
+		setDesc = { pRootSignatureSkybox, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSkybox[1]);
+		setDesc = { pRootSignatureBRDF, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF[0]);
+		setDesc = { pRootSignatureBRDF, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF[1]);
+		setDesc = { pRootSignatureBRDF, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, (1 + MATERIAL_INSTANCE_COUNT) + (gImageCount * MATERIAL_BRDF_COUNT * MATERIAL_INSTANCE_COUNT) };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF[2]);
+#if !defined(DIRECT3D11)
+		// Hair Simulation
+		setDesc = { pRootSignatureHairClear, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairClear);
+		setDesc = { pRootSignatureHairPreWarm, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairPreWarm);
+		setDesc = { pRootSignatureHairIntegrate, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairIntegrate);
+		setDesc = { pRootSignatureHairShockPropagation, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairShockPropagate);
+		setDesc = { pRootSignatureHairLocalConstraints, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairLocalConstraints);
+		setDesc = { pRootSignatureHairLengthConstraints, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairLengthConstraints);
+		setDesc = { pRootSignatureHairUpdateFollowHairs, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairFollowHairs);
+		// Hair Shadow
+		setDesc = { pRootSignatureHairShadow, DESCRIPTOR_UPDATE_FREQ_PER_BATCH, HAIR_TYPE_COUNT * MAX_NUM_DIRECTIONAL_LIGHTS * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairShadow[0]);
+		setDesc = { pRootSignatureHairShadow, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * MAX_NUM_DIRECTIONAL_LIGHTS * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairShadow[1]);
+		// Depth Peeling
+		setDesc = { pRootSignatureHairDepthPeeling, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairDepthPeeling[0]);
+		setDesc = { pRootSignatureHairDepthPeeling, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairDepthPeeling[1]);
+		setDesc = { pRootSignatureHairDepthPeeling, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairDepthPeeling[2]);
+		setDesc = { pRootSignatureHairDepthResolve, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairDepthResolve);
+		// Fill Colors
+		setDesc = { pRootSignatureHairFillColors, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairFillColors[0]);
+		setDesc = { pRootSignatureHairFillColors, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairFillColors[1]);
+		setDesc = { pRootSignatureHairFillColors, DESCRIPTOR_UPDATE_FREQ_PER_BATCH, HAIR_TYPE_COUNT * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairFillColors[2]);
+		setDesc = { pRootSignatureHairFillColors, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gHairDynamicDescriptorSetCount * gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairFillColors[3]);
+		setDesc = { pRootSignatureHairColorResolve, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetHairColorResolve);
+		// Debug
+		setDesc = { pRootSignatureShowCapsules, DESCRIPTOR_UPDATE_FREQ_PER_FRAME, gImageCount };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetShowCapsule);
 #endif
-		};
-
-		const uint32_t descBinderDescSize = (sizeof(descriptorBinderDesc) / sizeof(*descriptorBinderDesc));
-		addDescriptorBinder(pRenderer, 0, descBinderDescSize, descriptorBinderDesc, &pDescriptorBinder);
 	}
 
-	void DestroyDescriptorBinders()
-	{		
-		removeDescriptorBinder(pRenderer, pDescriptorBinder);
+	void DestroyDescriptorSets()
+	{
+		removeDescriptorSet(pRenderer, pDescriptorSetShadow[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetShadow[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetSkybox[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetSkybox[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF[2]);
+#if !defined(DIRECT3D11)
+		removeDescriptorSet(pRenderer, pDescriptorSetHairClear);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairPreWarm);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairIntegrate);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairShockPropagate);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairLocalConstraints);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairLengthConstraints);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairFollowHairs);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairShadow[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairShadow[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairDepthPeeling[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairDepthPeeling[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairDepthPeeling[2]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairDepthResolve);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairFillColors[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairFillColors[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairFillColors[2]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairFillColors[3]);
+		removeDescriptorSet(pRenderer, pDescriptorSetHairColorResolve);
+		removeDescriptorSet(pRenderer, pDescriptorSetShowCapsule);
+#endif
+	}
+
+	// Bake as many descriptor sets upfront as possible to avoid updates during runtime
+	void PrepareDescriptorSets()
+	{
+		// Shadow pass
+		{
+			DescriptorData shadowParams[1] = {};
+			shadowParams[0].pName = "cbCamera";
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				shadowParams[0].ppBuffers = &pUniformBufferCameraShadowPass[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetShadow[0], 1, shadowParams);
+			}
+
+			shadowParams[0].pName = "cbObject";
+			shadowParams[0].ppBuffers = &pUniformBufferGroundPlane;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetShadow[1], 1, shadowParams);
+			for (uint32_t j = 0; j < MATERIAL_INSTANCE_COUNT; ++j)
+			{
+				shadowParams[0].ppBuffers = &pUniformBufferNamePlates[j];
+				updateDescriptorSet(pRenderer, 1 + j, pDescriptorSetShadow[1], 1, shadowParams);
+				for (uint32_t i = 0; i < gImageCount; ++i)
+				{
+					shadowParams[0].ppBuffers = &pUniformBufferMatBall[i][j];
+					updateDescriptorSet(pRenderer, 1 + MATERIAL_INSTANCE_COUNT + (i * MATERIAL_INSTANCE_COUNT + j), pDescriptorSetShadow[1], 1, shadowParams);
+				}
+			}
+		}
+		// Skybox
+		{
+			DescriptorData skyParams[1] = {};
+			skyParams[0].pName = "skyboxTex";
+			skyParams[0].ppTextures = &pTextureSkybox;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetSkybox[0], 1, skyParams);
+
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				skyParams[0].pName = "uniformBlock";
+				skyParams[0].ppBuffers = &pUniformBufferCameraSkybox[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetSkybox[1], 1, skyParams);
+			}
+		}
+		// Materials
+		{
+			const char* pTextureName[5] =
+			{
+				"albedoMap",
+				"normalMap",
+				"metallicMap",
+				"roughnessMap",
+				"aoMap"
+			};
+
+			DescriptorData params[6] = {};
+			params[0].pName = "cbPointLights";
+			params[0].ppBuffers = &pUniformBufferPointLights;
+			params[1].pName = "cbDirectionalLights";
+			params[1].ppBuffers = &pUniformBufferDirectionalLights;
+			params[2].pName = "brdfIntegrationMap";
+			params[2].ppTextures = &pTextureBRDFIntegrationMap;
+			params[3].pName = "irradianceMap";
+			params[3].ppTextures = &pTextureIrradianceMap;
+			params[4].pName = "specularMap";
+			params[4].ppTextures = &pTextureSpecularMap;
+			params[5].pName = "shadowMap";
+			params[5].ppTextures = &pRenderTargetShadowMap->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetBRDF[0], 6, params);
+
+			// Per Frame
+			for (uint32_t f = 0; f < gImageCount; ++f)
+			{
+				params[0].pName = "cbCamera";
+				params[0].ppBuffers = &pUniformBufferCamera[f];
+				updateDescriptorSet(pRenderer, f, pDescriptorSetBRDF[1], 1, params);
+
+				for (uint32_t m = 0; m < MATERIAL_BRDF_COUNT; ++m)
+				{
+					uint32_t matTypeId = m * MATERIAL_TEXTURE_COUNT * MATERIAL_INSTANCE_COUNT;
+
+					for (uint32_t i = 0; i < MATERIAL_INSTANCE_COUNT; ++i)
+					{
+						//binding pbr material textures
+						for (uint32_t j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
+						{
+							uint32_t index = j + MATERIAL_TEXTURE_COUNT * i;
+							uint32_t textureIndex = matTypeId + index;
+							params[j].pName = pTextureName[j];
+							if (textureIndex >= gMaterialTextureCount)
+							{
+								LOGF(LogLevel::eERROR, "texture index greater than array size, setting it to default texture");
+								textureIndex = matTypeId + j;
+							}
+							params[j].ppTextures = &gTextureMaterialMaps[textureIndex];
+						}
+
+						params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
+						params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferMatBall[f][i];
+						const uint32_t index = 1 + MATERIAL_INSTANCE_COUNT + (f * MATERIAL_BRDF_COUNT * MATERIAL_INSTANCE_COUNT) + (m * MATERIAL_INSTANCE_COUNT) + i;
+						updateDescriptorSet(pRenderer, index, pDescriptorSetBRDF[2], MATERIAL_TEXTURE_COUNT + 1, params);
+					}
+				}
+			}
+
+			// Per Draw
+			for (uint32_t j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
+			{
+				params[j].pName = pTextureName[j];
+				params[j].ppTextures = &gTextureMaterialMapsGround[j];
+			}
+			params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
+			params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferGroundPlane;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetBRDF[2], MATERIAL_TEXTURE_COUNT + 1, params);
+
+			for (uint32_t j = 0; j < MATERIAL_INSTANCE_COUNT; ++j)
+			{
+				for (uint32_t j = 0; j < MATERIAL_TEXTURE_COUNT; ++j)
+				{
+					params[j].pName = pTextureName[j];
+					params[j].ppTextures = &gTextureMaterialMaps[j + 4];
+				}
+				params[MATERIAL_TEXTURE_COUNT].pName = "cbObject";
+				params[MATERIAL_TEXTURE_COUNT].ppBuffers = &pUniformBufferNamePlates[j];
+				updateDescriptorSet(pRenderer, 1 + j, pDescriptorSetBRDF[2], MATERIAL_TEXTURE_COUNT + 1, params);
+			}
+		}
+		// Hair
+#if !defined(DIRECT3D11)
+		{
+			DescriptorData hairParams[7] = {};
+			hairParams[0].pName = "DepthsTexture";
+#ifndef METAL
+			hairParams[0].ppTextures = &pTextureHairDepth;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairClear, 1, hairParams);
+#else
+			hairParams[0].ppBuffers = &pBufferHairDepth;
+			hairParams[1].pName = "cbHairGlobal";
+			hairParams[1].ppBuffers = &pUniformBufferHairGlobal;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairClear, 2, hairParams);
+#endif
+
+			uint32_t descriptorSetIndex = 0;
+			uint32_t shadowDescriptorSetIndex[2] = { 0 };
+			for (uint32_t f = 0; f < gImageCount; ++f)
+			{
+				for (uint32_t hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
+				{
+					for (size_t i = 0; i < gHairTypeIndices[hairType].size(); ++i)
+					{
+						uint32_t k = gHairTypeIndices[hairType][i];
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairVertexPositionsPrev";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
+						hairParams[3].pName = "HairVertexPositionsPrevPrev";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
+						hairParams[4].pName = "HairRestPositions";
+						hairParams[4].ppBuffers = &gHair[k].pBufferHairVertexPositions;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairPreWarm, 5, hairParams);
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairVertexPositionsPrev";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
+						hairParams[3].pName = "HairVertexPositionsPrevPrev";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
+						hairParams[4].pName = "HairRestPositions";
+						hairParams[4].ppBuffers = &gHair[k].pBufferHairVertexPositions;
+						hairParams[5].pName = "cbHairGlobal";
+						hairParams[5].ppBuffers = &pUniformBufferHairGlobal;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairIntegrate, 6, hairParams);
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairVertexPositionsPrev";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
+						hairParams[3].pName = "HairVertexPositionsPrevPrev";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[2];
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairShockPropagate, 4, hairParams);
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairGlobalRotations";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairGlobalRotations;
+						hairParams[3].pName = "HairRefsInLocalFrame";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairRefsInLocalFrame;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairLocalConstraints, 4, hairParams);
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairVertexTangents";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
+						hairParams[3].pName = "HairRestLengths";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairRestLenghts;
+						hairParams[4].pName = "cbHairGlobal";
+						hairParams[4].ppBuffers = &pUniformBufferHairGlobal;
+#if HAIR_MAX_CAPSULE_COUNT > 0
+						hairParams[5].pName = "HairVertexPositionsPrev";
+						hairParams[5].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[1];
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairLengthConstraints, 6, hairParams);
+#else
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairLengthConstraints, 5, hairParams);
+#endif
+
+						hairParams[0].pName = "cbSimulation";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairSimulation[f];
+						hairParams[1].pName = "HairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "HairVertexTangents";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
+						hairParams[3].pName = "FollowHairRootOffsets";
+						hairParams[3].ppBuffers = &gHair[k].pBufferFollowHairRootOffsets;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairFollowHairs, 4, hairParams);
+
+						hairParams[0].pName = "cbHair";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[f];
+						hairParams[1].pName = "GuideHairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "GuideHairVertexTangents";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
+						hairParams[3].pName = "HairThicknessCoefficients";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairDepthPeeling[2], 4, hairParams);
+
+						hairParams[0].pName = "cbHair";
+						hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[f];
+						hairParams[1].pName = "GuideHairVertexPositions";
+						hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+						hairParams[2].pName = "GuideHairVertexTangents";
+						hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
+						hairParams[3].pName = "HairThicknessCoefficients";
+						hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
+						updateDescriptorSet(pRenderer, descriptorSetIndex, pDescriptorSetHairFillColors[3], 4, hairParams);
+
+						++descriptorSetIndex;
+					}
+
+					for (uint32_t i = 0; i < MAX_NUM_DIRECTIONAL_LIGHTS; ++i)
+					{
+						hairParams[0].pName = "cbCamera";
+						hairParams[0].ppBuffers = &pUniformBufferCameraHairShadows[f][hairType][i];
+						updateDescriptorSet(pRenderer, shadowDescriptorSetIndex[0], pDescriptorSetHairShadow[0], 1, hairParams);
+
+						for (size_t j = 0; j < gHairTypeIndices[hairType].size(); ++j)
+						{
+							uint32_t k = gHairTypeIndices[hairType][j];
+
+							hairParams[0].pName = "cbHair";
+							hairParams[0].ppBuffers = &gHair[k].pUniformBufferHairShading[f];
+							hairParams[1].pName = "GuideHairVertexPositions";
+							hairParams[1].ppBuffers = &gHair[k].pBufferHairSimulationVertexPositions[0];
+							hairParams[2].pName = "GuideHairVertexTangents";
+							hairParams[2].ppBuffers = &gHair[k].pBufferHairVertexTangents;
+							hairParams[3].pName = "HairThicknessCoefficients";
+							hairParams[3].ppBuffers = &gHair[k].pBufferHairThicknessCoefficients;
+							updateDescriptorSet(pRenderer, shadowDescriptorSetIndex[1], pDescriptorSetHairShadow[1], 4, hairParams);
+
+							++shadowDescriptorSetIndex[1];
+						}
+
+						++shadowDescriptorSetIndex[0];
+					}
+
+					Texture* ppShadowMaps[MAX_NUM_DIRECTIONAL_LIGHTS] = {};
+					for (int i = 0; i < MAX_NUM_DIRECTIONAL_LIGHTS; ++i)
+						ppShadowMaps[i] = pRenderTargetHairShadows[hairType][i]->pTexture;
+
+					hairParams[0].pName = "DirectionalLightShadowMaps";
+					hairParams[0].ppTextures = ppShadowMaps;
+					hairParams[0].mCount = MAX_NUM_DIRECTIONAL_LIGHTS;
+					hairParams[1].pName = "cbDirectionalLightShadowCameras";
+					hairParams[1].ppBuffers = pUniformBufferCameraHairShadows[f][hairType];
+					hairParams[1].mCount = MAX_NUM_DIRECTIONAL_LIGHTS;
+					updateDescriptorSet(pRenderer, f * HAIR_TYPE_COUNT + hairType, pDescriptorSetHairFillColors[2], 2, hairParams);
+					hairParams[0] = {};
+					hairParams[1] = {};
+				}
+
+				hairParams[0].pName = "cbCamera";
+				hairParams[0].ppBuffers = &pUniformBufferCamera[f];
+				updateDescriptorSet(pRenderer, f, pDescriptorSetHairDepthPeeling[1], 1, hairParams);
+				updateDescriptorSet(pRenderer, f, pDescriptorSetHairFillColors[1], 1, hairParams);
+			}
+
+			hairParams[0].pName = "DepthsTexture";
+#ifndef METAL
+			hairParams[0].ppTextures = &pTextureHairDepth;
+#else
+			hairParams[0].ppBuffers = &pBufferHairDepth;
+#endif
+			hairParams[1].pName = "cbHairGlobal";
+			hairParams[1].ppBuffers = &pUniformBufferHairGlobal;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairDepthPeeling[0], 2, hairParams);
+
+#ifndef METAL
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairDepthResolve, 1, hairParams);
+#else
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairDepthResolve, 2, hairParams);
+#endif
+
+			hairParams[0].pName = "cbPointLights";
+			hairParams[0].ppBuffers = &pUniformBufferPointLights;
+			hairParams[1].pName = "cbDirectionalLights";
+			hairParams[1].ppBuffers = &pUniformBufferDirectionalLights;
+			hairParams[2].pName = "cbHairGlobal";
+			hairParams[2].ppBuffers = &pUniformBufferHairGlobal;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairFillColors[0], 3, hairParams);
+
+			hairParams[0].pName = "ColorsTexture";
+			hairParams[0].ppTextures = &pRenderTargetFillColors->pTexture;
+			hairParams[1].pName = "InvAlphaTexture";
+			hairParams[1].ppTextures = &pRenderTargetDepthPeeling->pTexture;
+			updateDescriptorSet(pRenderer, 0, pDescriptorSetHairColorResolve, 2, hairParams);
+		}
+		// Debug
+		{
+			DescriptorData params[1] = {};
+			for (uint32_t i = 0; i < gImageCount; ++i)
+			{
+				params[0].pName = "cbCamera";
+				params[0].ppBuffers = &pUniformBufferCamera[i];
+				updateDescriptorSet(pRenderer, i, pDescriptorSetShowCapsule, 1, params);
+			}
+		}
+#endif
 	}
 
 	void DestroyRootSignatures()
@@ -2755,7 +2729,7 @@ class MaterialPlayground: public IApp
 		removeRootSignature(pRenderer, pRootSignatureBRDF);
 		removeRootSignature(pRenderer, pRootSignatureSkybox);
 		removeRootSignature(pRenderer, pRootSignatureShadowPass);
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		removeRootSignature(pRenderer, pRootSignatureHairClear);
 		removeRootSignature(pRenderer, pRootSignatureHairDepthPeeling);
 		removeRootSignature(pRenderer, pRootSignatureHairDepthResolve);
@@ -2783,6 +2757,23 @@ class MaterialPlayground: public IApp
 
 	void LoadModelsAndTextures()
 	{
+		gVertexLayoutDefault.mAttribCount = 3;
+		gVertexLayoutDefault.mAttribs[0].mSemantic = SEMANTIC_POSITION;
+		gVertexLayoutDefault.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
+		gVertexLayoutDefault.mAttribs[0].mBinding = 0;
+		gVertexLayoutDefault.mAttribs[0].mLocation = 0;
+		gVertexLayoutDefault.mAttribs[0].mOffset = 0;
+		gVertexLayoutDefault.mAttribs[1].mSemantic = SEMANTIC_NORMAL;
+		gVertexLayoutDefault.mAttribs[1].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
+		gVertexLayoutDefault.mAttribs[1].mLocation = 1;
+		gVertexLayoutDefault.mAttribs[1].mBinding = 0;
+		gVertexLayoutDefault.mAttribs[1].mOffset = 3 * sizeof(float);
+		gVertexLayoutDefault.mAttribs[2].mSemantic = SEMANTIC_TEXCOORD0;
+		gVertexLayoutDefault.mAttribs[2].mFormat = TinyImageFormat_R32G32_SFLOAT;
+		gVertexLayoutDefault.mAttribs[2].mLocation = 2;
+		gVertexLayoutDefault.mAttribs[2].mBinding = 0;
+		gVertexLayoutDefault.mAttribs[2].mOffset = 6 * sizeof(float);
+
 		bool modelsAreLoaded = false;
 		gLuaManager.SetFunction("LoadModel", [this](ILuaStateWrap* state) -> int {
 			eastl::string filename = state->GetStringArg(1);    //indexing in Lua starts from 1 (NOT 0) !!
@@ -2790,22 +2781,18 @@ class MaterialPlayground: public IApp
 			//this->LoadModel(filename);
 			return 0;    //return amount of arguments that we want to send back to script
 		});
-
-		eastl::string loadModelsFilename = FileSystem::FixPath("loadModels.lua", FSR_Middleware2);
-		auto str = loadModelsFilename.c_str();
-		gLuaManager.AddAsyncScript(loadModelsFilename.c_str(), [&modelsAreLoaded](ScriptState state) { modelsAreLoaded = true; });
+        
+        PathHandle loadModelsPath = fsCopyPathInResourceDirectory(RD_MIDDLEWARE_2, "loadModels.lua");
+		gLuaManager.AddAsyncScript(loadModelsPath, [&modelsAreLoaded](ScriptState state) { modelsAreLoaded = true; });
 
 		while (!modelsAreLoaded)
 			Thread::Sleep(0);
 
 		uintptr_t meshCount = pStagingData->mModelList.size();
-		pMeshes.resize(meshCount);
-		pStagingData->mModelVerticesList.resize(meshCount);
-		pStagingData->mModelIndicesList.resize(meshCount);
+		gMeshes.resize(meshCount);
 		addThreadSystemRangeTask(pIOThreads, &memberTaskFunc<MaterialPlayground, &MaterialPlayground::LoadModel>, this, meshCount);
 
 		bool texturesAreLoaded = false;
-		TextureLoadDesc textureDesc = {};
 		gLuaManager.SetFunction("GetTextureResolution", [](ILuaStateWrap* state) -> int {
 			state->PushResultString(TEXTURE_RESOLUTION);
 			return 1;
@@ -2824,14 +2811,15 @@ class MaterialPlayground: public IApp
 
 			return 0;
 		});
-		eastl::string loadTexturesFilename = FileSystem::FixPath("loadTextures.lua", FSR_Middleware2);
-		gLuaManager.AddAsyncScript(loadTexturesFilename.c_str(), [&texturesAreLoaded](ScriptState state) { texturesAreLoaded = true; });
-
+        
+        PathHandle loadTexturesPath = fsCopyPathInResourceDirectory(RD_MIDDLEWARE_2, "loadTextures.lua");
+		gLuaManager.AddAsyncScript(loadTexturesPath, [&texturesAreLoaded](ScriptState state) { texturesAreLoaded = true; });
+        
 		while (!texturesAreLoaded)
 			Thread::Sleep(0);
 
 		uintptr_t materialTextureCount = pStagingData->mMaterialNamesStorage.size();
-		pTextureMaterialMaps.resize(materialTextureCount);
+		gTextureMaterialMaps.resize(materialTextureCount);
 		addThreadSystemRangeTask(pIOThreads, LoadMaterialTexturesTask, pStagingData, materialTextureCount);
 
 		bool groundTexturesAreLoaded = false;
@@ -2846,36 +2834,37 @@ class MaterialPlayground: public IApp
 
 			return 0;
 		});
-		eastl::string loadGroundTexturesFilename = FileSystem::FixPath("loadGroundTextures.lua", FSR_Middleware2);
+        
+        PathHandle loadGroundTexturesPath = fsCopyPathInResourceDirectory(RD_MIDDLEWARE_2, "loadGroundTextures.lua");
 		gLuaManager.AddAsyncScript(
-			loadGroundTexturesFilename.c_str(), [&groundTexturesAreLoaded](ScriptState state) { groundTexturesAreLoaded = true; });
+			loadGroundTexturesPath, [&groundTexturesAreLoaded](ScriptState state) { groundTexturesAreLoaded = true; });
 
 		while (!groundTexturesAreLoaded)
 			Thread::Sleep(0);
 
 		uintptr_t groundTextureCount = pStagingData->mGroundNamesStorage.size();
-		pTextureMaterialMapsGround.resize(groundTextureCount);
+		gTextureMaterialMapsGround.resize(groundTextureCount);
 		addThreadSystemRangeTask(pIOThreads, &LoadGroundTexturesTask, pStagingData, groundTextureCount);
 	}
 
 	static void LoadMaterialTexturesTask(void* data, uintptr_t i)
 	{
-		StagingData*    pTaskData = (StagingData*)data;
+        StagingData*    pTaskData = (StagingData*)data;
+        PathHandle path = fsCopyPathInResourceDirectory(RD_OTHER_FILES, pTaskData->mMaterialNamesStorage[i].c_str());
 		TextureLoadDesc desc = {};
-		desc.mRoot = FSR_OtherFiles;
-		desc.pFilename = pTaskData->mMaterialNamesStorage[i].c_str();
-		desc.ppTexture = &pTextureMaterialMaps[i];
-		addResource(&desc, true);
+        desc.pFilePath = path;
+		desc.ppTexture = &gTextureMaterialMaps[i];
+		addResource(&desc, NULL, LOAD_PRIORITY_NORMAL);
 	}
 
 	static void LoadGroundTexturesTask(void* data, uintptr_t i)
 	{
-		StagingData*    pTaskData = (StagingData*)data;
+        StagingData*    pTaskData = (StagingData*)data;
+        PathHandle path = fsCopyPathInResourceDirectory(RD_OTHER_FILES, pTaskData->mGroundNamesStorage[i].c_str());
 		TextureLoadDesc desc = {};
-		desc.mRoot = FSR_OtherFiles;
-		desc.pFilename = pTaskData->mGroundNamesStorage[i].c_str();
-		desc.ppTexture = &pTextureMaterialMapsGround[i];
-		addResource(&desc, true);
+        desc.pFilePath = path;
+		desc.ppTexture = &gTextureMaterialMapsGround[i];
+		addResource(&desc, NULL, LOAD_PRIORITY_NORMAL);
 	}
 
 	void ComputePBRMaps()
@@ -2894,11 +2883,15 @@ class MaterialPlayground: public IApp
 		RootSignature*    pSpecularRootSignature = NULL;
 		Pipeline*         pSpecularPipeline = NULL;
 		Sampler*          pSkyboxSampler = NULL;
-		DescriptorBinder* pPBRDescriptorBinder = NULL;
+		DescriptorSet*    pDescriptorSetBRDF = { NULL };
+		DescriptorSet*    pDescriptorSetPanoToCube[2] = { NULL };
+		DescriptorSet*    pDescriptorSetIrradiance = { NULL };
+		DescriptorSet*    pDescriptorSetSpecular[2] = { NULL };
 
 		static const int skyboxIndex = 0;
-		const char*      skyboxNames[] = {
-			"LA_Helipad.ktx",
+		const char*      skyboxNames[] =
+		{
+			"LA_Helipad",
 		};
 		// PBR Texture values (these values are mirrored on the shaders).
 		static const uint32_t gBRDFIntegrationSize = 512;
@@ -2914,22 +2907,21 @@ class MaterialPlayground: public IApp
 		addSampler(pRenderer, &samplerDesc, &pSkyboxSampler);
 
 		// Load the skybox panorama texture.
-		SyncToken       token;
+		SyncToken       token = {};
+        PathHandle skyboxPath = fsCopyPathInResourceDirectory(RD_TEXTURES, skyboxNames[skyboxIndex]);
 		TextureLoadDesc panoDesc = {};
-		panoDesc.mRoot = FSR_Textures;
-		panoDesc.pFilename = skyboxNames[skyboxIndex];
+		panoDesc.pFilePath = skyboxPath;
 		panoDesc.ppTexture = &pPanoSkybox;
-		addResource(&panoDesc, &token);
+		addResource(&panoDesc, &token, LOAD_PRIORITY_HIGH);
 
 		TextureDesc skyboxImgDesc = {};
 		skyboxImgDesc.mArraySize = 6;
 		skyboxImgDesc.mDepth = 1;
-		skyboxImgDesc.mFormat = ImageFormat::RGBA32F;
+		skyboxImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		skyboxImgDesc.mHeight = gSkyboxSize;
 		skyboxImgDesc.mWidth = gSkyboxSize;
 		skyboxImgDesc.mMipLevels = gSkyboxMips;
 		skyboxImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		skyboxImgDesc.mSrgb = false;
 		skyboxImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		skyboxImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		skyboxImgDesc.pDebugName = L"skyboxImgBuff";
@@ -2937,17 +2929,16 @@ class MaterialPlayground: public IApp
 		TextureLoadDesc skyboxLoadDesc = {};
 		skyboxLoadDesc.pDesc = &skyboxImgDesc;
 		skyboxLoadDesc.ppTexture = &pTextureSkybox;
-		addResource(&skyboxLoadDesc);
+		addResource(&skyboxLoadDesc, &token, LOAD_PRIORITY_HIGH);
 
 		TextureDesc irrImgDesc = {};
 		irrImgDesc.mArraySize = 6;
 		irrImgDesc.mDepth = 1;
-		irrImgDesc.mFormat = ImageFormat::RGBA32F;
+		irrImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		irrImgDesc.mHeight = gIrradianceSize;
 		irrImgDesc.mWidth = gIrradianceSize;
 		irrImgDesc.mMipLevels = 1;
 		irrImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		irrImgDesc.mSrgb = false;
 		irrImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		irrImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		irrImgDesc.pDebugName = L"irrImgBuff";
@@ -2955,17 +2946,16 @@ class MaterialPlayground: public IApp
 		TextureLoadDesc irrLoadDesc = {};
 		irrLoadDesc.pDesc = &irrImgDesc;
 		irrLoadDesc.ppTexture = &pTextureIrradianceMap;
-		addResource(&irrLoadDesc);
+		addResource(&irrLoadDesc, &token, LOAD_PRIORITY_HIGH);
 
 		TextureDesc specImgDesc = {};
 		specImgDesc.mArraySize = 6;
 		specImgDesc.mDepth = 1;
-		specImgDesc.mFormat = ImageFormat::RGBA32F;
+		specImgDesc.mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		specImgDesc.mHeight = gSpecularSize;
 		specImgDesc.mWidth = gSpecularSize;
 		specImgDesc.mMipLevels = gSpecularMips;
 		specImgDesc.mSampleCount = SAMPLE_COUNT_1;
-		specImgDesc.mSrgb = false;
 		specImgDesc.mStartState = RESOURCE_STATE_UNORDERED_ACCESS;
 		specImgDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE_CUBE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		specImgDesc.pDebugName = L"specImgBuff";
@@ -2973,7 +2963,7 @@ class MaterialPlayground: public IApp
 		TextureLoadDesc specImgLoadDesc = {};
 		specImgLoadDesc.pDesc = &specImgDesc;
 		specImgLoadDesc.ppTexture = &pTextureSpecularMap;
-		addResource(&specImgLoadDesc);
+		addResource(&specImgLoadDesc, &token, LOAD_PRIORITY_HIGH);
 
 		// Create empty texture for BRDF integration map.
 		TextureLoadDesc brdfIntegrationLoadDesc = {};
@@ -2983,36 +2973,46 @@ class MaterialPlayground: public IApp
 		brdfIntegrationDesc.mDepth = 1;
 		brdfIntegrationDesc.mArraySize = 1;
 		brdfIntegrationDesc.mMipLevels = 1;
-		brdfIntegrationDesc.mFormat = ImageFormat::RG32F;
+		brdfIntegrationDesc.mFormat = TinyImageFormat_R32G32_SFLOAT;
 		brdfIntegrationDesc.mDescriptors = DESCRIPTOR_TYPE_TEXTURE | DESCRIPTOR_TYPE_RW_TEXTURE;
 		brdfIntegrationDesc.mSampleCount = SAMPLE_COUNT_1;
 		brdfIntegrationDesc.mHostVisible = false;
 		brdfIntegrationLoadDesc.pDesc = &brdfIntegrationDesc;
 		brdfIntegrationLoadDesc.ppTexture = &pTextureBRDFIntegrationMap;
-		addResource(&brdfIntegrationLoadDesc);
+		addResource(&brdfIntegrationLoadDesc, &token, LOAD_PRIORITY_HIGH);
 
 		// Load pre-processing shaders.
 		ShaderLoadDesc panoToCubeShaderDesc = {};
-		panoToCubeShaderDesc.mStages[0] = { "panoToCube.comp", NULL, 0, FSR_SrcShaders };
+		panoToCubeShaderDesc.mStages[0] = { "panoToCube.comp", NULL, 0, RD_SHADER_SOURCES };
 
-		GPUPresetLevel presetLevel = pRenderer->mGpuSettings->mGpuVendorPreset.mPresetLevel;
+		GPUPresetLevel presetLevel = pRenderer->pActiveGpuSettings->mGpuVendorPreset.mPresetLevel;
 		uint32_t       importanceSampleCounts[GPUPresetLevel::GPU_PRESET_COUNT] = { 0, 0, 64, 128, 256, 1024 };
 		uint32_t       importanceSampleCount = importanceSampleCounts[presetLevel];
-		ShaderMacro    importanceSampleMacro = { "IMPORTANCE_SAMPLE_COUNT", eastl::string().sprintf("%u", importanceSampleCount) };
+		char           importanceSampleCountBuffer[5] = {};
+		sprintf(importanceSampleCountBuffer, "%u", importanceSampleCount);
+		ShaderMacro    importanceSampleMacro = { "IMPORTANCE_SAMPLE_COUNT", importanceSampleCountBuffer };
+
+		float          irradianceSampleDeltas[GPUPresetLevel::GPU_PRESET_COUNT] = { 0, 0, 0.25f, 0.025f, 0.025f, 0.025f };
+		float          irradianceSampleDelta = irradianceSampleDeltas[presetLevel];
+		char           irradianceSampleDeltaBuffer[10] = {};
+		sprintf(irradianceSampleDeltaBuffer, "%f", irradianceSampleDelta);
+		ShaderMacro    irradianceSampleMacro = { "SAMPLE_DELTA", irradianceSampleDeltaBuffer };
 
 		ShaderLoadDesc brdfIntegrationShaderDesc = {};
-		brdfIntegrationShaderDesc.mStages[0] = { "BRDFIntegration.comp", &importanceSampleMacro, 1, FSR_SrcShaders };
+		brdfIntegrationShaderDesc.mStages[0] = { "BRDFIntegration.comp", &importanceSampleMacro, 1, RD_SHADER_SOURCES };
 
 		ShaderLoadDesc irradianceShaderDesc = {};
-		irradianceShaderDesc.mStages[0] = { "computeIrradianceMap.comp", NULL, 0, FSR_SrcShaders };
+		irradianceShaderDesc.mStages[0] = { "computeIrradianceMap.comp", &irradianceSampleMacro, 1, RD_SHADER_SOURCES };
 
 		ShaderLoadDesc specularShaderDesc = {};
-		specularShaderDesc.mStages[0] = { "computeSpecularMap.comp", &importanceSampleMacro, 1, FSR_SrcShaders };
+		specularShaderDesc.mStages[0] = { "computeSpecularMap.comp", &importanceSampleMacro, 1, RD_SHADER_SOURCES };
 
+#ifndef TARGET_IOS
 		addShader(pRenderer, &panoToCubeShaderDesc, &pPanoToCubeShader);
-		addShader(pRenderer, &brdfIntegrationShaderDesc, &pBRDFIntegrationShader);
 		addShader(pRenderer, &irradianceShaderDesc, &pIrradianceShader);
 		addShader(pRenderer, &specularShaderDesc, &pSpecularShader);
+#endif
+		addShader(pRenderer, &brdfIntegrationShaderDesc, &pBRDFIntegrationShader);
 
 		const char*       pStaticSamplerNames[] = { "skyboxSampler" };
 		RootSignatureDesc panoRootDesc = { &pPanoToCubeShader, 1 };
@@ -3031,38 +3031,52 @@ class MaterialPlayground: public IApp
 		specularRootDesc.mStaticSamplerCount = 1;
 		specularRootDesc.ppStaticSamplerNames = pStaticSamplerNames;
 		specularRootDesc.ppStaticSamplers = &pSkyboxSampler;
+#ifndef TARGET_IOS
 		addRootSignature(pRenderer, &panoRootDesc, &pPanoToCubeRootSignature);
+        addRootSignature(pRenderer, &irradianceRootDesc, &pIrradianceRootSignature);
+        addRootSignature(pRenderer, &specularRootDesc, &pSpecularRootSignature);
+#endif
 		addRootSignature(pRenderer, &brdfRootDesc, &pBRDFIntegrationRootSignature);
-		addRootSignature(pRenderer, &irradianceRootDesc, &pIrradianceRootSignature);
-		addRootSignature(pRenderer, &specularRootDesc, &pSpecularRootSignature);
 
-		DescriptorBinderDesc descriptorBinderDesc[4] = {
-			{ pPanoToCubeRootSignature, gSkyboxMips + 1, gSkyboxMips + 1 },
-			{ pBRDFIntegrationRootSignature },
-			{ pIrradianceRootSignature },
-			{ pSpecularRootSignature, gSkyboxMips + 1, gSpecularMips + 1 }
-		};
-
-		addDescriptorBinder(pRenderer, 0, 4, descriptorBinderDesc, &pPBRDescriptorBinder);
+		DescriptorSetDesc setDesc = { pBRDFIntegrationRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetBRDF);
+#ifndef TARGET_IOS
+		setDesc = { pPanoToCubeRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPanoToCube[0]);
+		setDesc = { pPanoToCubeRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gSkyboxMips };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetPanoToCube[1]);
+		setDesc = { pIrradianceRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetIrradiance);
+		setDesc = { pSpecularRootSignature, DESCRIPTOR_UPDATE_FREQ_NONE, 1 };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSpecular[0]);
+		setDesc = { pSpecularRootSignature, DESCRIPTOR_UPDATE_FREQ_PER_DRAW, gSkyboxMips };
+		addDescriptorSet(pRenderer, &setDesc, &pDescriptorSetSpecular[1]);
+#endif
 
 		PipelineDesc desc = {};
 		desc.mType = PIPELINE_TYPE_COMPUTE;
 		ComputePipelineDesc& pipelineSettings = desc.mComputeDesc;
-		pipelineSettings.pShaderProgram = pPanoToCubeShader;
+#ifndef TARGET_IOS
+        pipelineSettings.pShaderProgram = pPanoToCubeShader;
 		pipelineSettings.pRootSignature = pPanoToCubeRootSignature;
 		addPipeline(pRenderer, &desc, &pPanoToCubePipeline);
+        pipelineSettings.pShaderProgram = pIrradianceShader;
+        pipelineSettings.pRootSignature = pIrradianceRootSignature;
+        addPipeline(pRenderer, &desc, &pIrradiancePipeline);
+        pipelineSettings.pShaderProgram = pSpecularShader;
+        pipelineSettings.pRootSignature = pSpecularRootSignature;
+        addPipeline(pRenderer, &desc, &pSpecularPipeline);
+#endif
 		pipelineSettings.pShaderProgram = pBRDFIntegrationShader;
 		pipelineSettings.pRootSignature = pBRDFIntegrationRootSignature;
 		addPipeline(pRenderer, &desc, &pBRDFIntegrationPipeline);
-		pipelineSettings.pShaderProgram = pIrradianceShader;
-		pipelineSettings.pRootSignature = pIrradianceRootSignature;
-		addPipeline(pRenderer, &desc, &pIrradiancePipeline);
-		pipelineSettings.pShaderProgram = pSpecularShader;
-		pipelineSettings.pRootSignature = pSpecularRootSignature;
-		addPipeline(pRenderer, &desc, &pSpecularPipeline);
+
+		waitForToken(&token);
+
+		Cmd* pCmd = ppCmds[0];
 
 		// Compute the BRDF Integration map.
-		beginCmd(ppCmds[0]);
+		beginCmd(pCmd);
 
 		TextureBarrier uavBarriers[4] = {
 			{ pTextureSkybox, RESOURCE_STATE_UNORDERED_ACCESS },
@@ -3070,27 +3084,30 @@ class MaterialPlayground: public IApp
 			{ pTextureSpecularMap, RESOURCE_STATE_UNORDERED_ACCESS },
 			{ pTextureBRDFIntegrationMap, RESOURCE_STATE_UNORDERED_ACCESS },
 		};
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 4, uavBarriers, false);
+		cmdResourceBarrier(pCmd, 0, NULL, 4, uavBarriers, 0, NULL);
 
-		cmdBindPipeline(ppCmds[0], pBRDFIntegrationPipeline);
+		cmdBindPipeline(pCmd, pBRDFIntegrationPipeline);
 		DescriptorData params[2] = {};
 		params[0].pName = "dstTexture";
 		params[0].ppTextures = &pTextureBRDFIntegrationMap;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pBRDFIntegrationRootSignature, 1, params);
-		const uint32_t* pThreadGroupSize = pBRDFIntegrationShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetBRDF, 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetBRDF);
+		const uint32_t* pThreadGroupSize = pBRDFIntegrationShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 		cmdDispatch(
-			ppCmds[0], gBRDFIntegrationSize / pThreadGroupSize[0], gBRDFIntegrationSize / pThreadGroupSize[1],
+			pCmd, gBRDFIntegrationSize / pThreadGroupSize[0], gBRDFIntegrationSize / pThreadGroupSize[1],
 			pThreadGroupSize[2]);
 
 		TextureBarrier srvBarrier[1] = { { pTextureBRDFIntegrationMap, RESOURCE_STATE_SHADER_RESOURCE } };
 
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 1, srvBarrier, true);
+		cmdResourceBarrier(pCmd, 0, NULL, 1, srvBarrier, 0, NULL);
 
+#ifndef TARGET_IOS
 		// Store the panorama texture inside a cubemap.
-		cmdBindPipeline(ppCmds[0], pPanoToCubePipeline);
+		cmdBindPipeline(pCmd, pPanoToCubePipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pPanoSkybox;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pPanoToCubeRootSignature, 1, params);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetPanoToCube[0], 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetPanoToCube[0]);
 
 		struct
 		{
@@ -3101,41 +3118,43 @@ class MaterialPlayground: public IApp
 		for (uint32_t i = 0; i < gSkyboxMips; ++i)
 		{
 			rootConstantData.mip = i;
-			params[0].pName = "RootConstant";
-			params[0].pRootConstant = &rootConstantData;
-			params[1].pName = "dstTexture";
-			params[1].ppTextures = &pTextureSkybox;
-			params[1].mUAVMipSlice = i;
-			cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pPanoToCubeRootSignature, 2, params);
+			cmdBindPushConstants(pCmd, pPanoToCubeRootSignature, "RootConstant", &rootConstantData);
+			params[0].pName = "dstTexture";
+			params[0].ppTextures = &pTextureSkybox;
+			params[0].mUAVMipSlice = i;
+			updateDescriptorSet(pRenderer, i, pDescriptorSetPanoToCube[1], 1, params);
+			cmdBindDescriptorSet(pCmd, i, pDescriptorSetPanoToCube[1]);
 
-			pThreadGroupSize = pPanoToCubeShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+			pThreadGroupSize = pPanoToCubeShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 			cmdDispatch(
-				ppCmds[0], max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[0]),
+				pCmd, max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[0]),
 				max(1u, (uint32_t)(rootConstantData.textureSize >> i) / pThreadGroupSize[1]), 6);
 		}
 
 		TextureBarrier srvBarriers[1] = { { pTextureSkybox, RESOURCE_STATE_SHADER_RESOURCE } };
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 1, srvBarriers, false);
+		cmdResourceBarrier(pCmd, 0, NULL, 1, srvBarriers, 0, NULL);
 		/************************************************************************/
 		// Compute sky irradiance
 		/************************************************************************/
 		params[0] = {};
 		params[1] = {};
-		cmdBindPipeline(ppCmds[0], pIrradiancePipeline);
+		cmdBindPipeline(pCmd, pIrradiancePipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pTextureSkybox;
 		params[1].pName = "dstTexture";
 		params[1].ppTextures = &pTextureIrradianceMap;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pIrradianceRootSignature, 2, params);
-		pThreadGroupSize = pIrradianceShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
-		cmdDispatch(ppCmds[0], gIrradianceSize / pThreadGroupSize[0], gIrradianceSize / pThreadGroupSize[1], 6);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetIrradiance, 2, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetIrradiance);
+		pThreadGroupSize = pIrradianceShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
+		cmdDispatch(pCmd, gIrradianceSize / pThreadGroupSize[0], gIrradianceSize / pThreadGroupSize[1], 6);
 		/************************************************************************/
 		// Compute specular sky
 		/************************************************************************/
-		cmdBindPipeline(ppCmds[0], pSpecularPipeline);
+		cmdBindPipeline(pCmd, pSpecularPipeline);
 		params[0].pName = "srcTexture";
 		params[0].ppTextures = &pTextureSkybox;
-		cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pSpecularRootSignature, 1, params);
+		updateDescriptorSet(pRenderer, 0, pDescriptorSetSpecular[0], 1, params);
+		cmdBindDescriptorSet(pCmd, 0, pDescriptorSetSpecular[0]);
 
 		struct PrecomputeSkySpecularData
 		{
@@ -3148,125 +3167,84 @@ class MaterialPlayground: public IApp
 			PrecomputeSkySpecularData data = {};
 			data.roughness = (float)i / (float)(gSpecularMips - 1);
 			data.mipSize = gSpecularSize >> i;
-			params[0].pName = "RootConstant";
-			params[0].pRootConstant = &data;
-			params[1].pName = "dstTexture";
-			params[1].ppTextures = &pTextureSpecularMap;
-			params[1].mUAVMipSlice = i;
-			cmdBindDescriptors(ppCmds[0], pPBRDescriptorBinder, pSpecularRootSignature, 2, params);
-			pThreadGroupSize = pIrradianceShader->mReflection.mStageReflections[0].mNumThreadsPerGroup;
+			cmdBindPushConstants(pCmd, pSpecularRootSignature, "RootConstant", &data);
+			params[0].pName = "dstTexture";
+			params[0].ppTextures = &pTextureSpecularMap;
+			params[0].mUAVMipSlice = i;
+			updateDescriptorSet(pRenderer, i, pDescriptorSetSpecular[1], 1, params);
+			cmdBindDescriptorSet(pCmd, i, pDescriptorSetSpecular[1]);
+			pThreadGroupSize = pIrradianceShader->pReflection->mStageReflections[0].mNumThreadsPerGroup;
 			cmdDispatch(
-				ppCmds[0], eastl::max(1u, (gSpecularSize >> i) / pThreadGroupSize[0]),
-				eastl::max(1u, (gSpecularSize >> i) / pThreadGroupSize[1]), 6);
+				pCmd, max(1u, (gSpecularSize >> i) / pThreadGroupSize[0]),
+				max(1u, (gSpecularSize >> i) / pThreadGroupSize[1]), 6);
 		}
 		/************************************************************************/
 		/************************************************************************/
 		TextureBarrier srvBarriers2[2] = { { pTextureIrradianceMap, RESOURCE_STATE_SHADER_RESOURCE },
 										   { pTextureSpecularMap, RESOURCE_STATE_SHADER_RESOURCE } };
-		cmdResourceBarrier(ppCmds[0], 0, NULL, 2, srvBarriers2, false);
-
-		endCmd(ppCmds[0]);
-		waitTokenCompleted(token);
-		queueSubmit(pGraphicsQueue, 1, &ppCmds[0], NULL, 0, NULL, 0, NULL);
+		cmdResourceBarrier(pCmd, 0, NULL, 2, srvBarriers2, 0, NULL);
+#endif
+		endCmd(pCmd);
+        
+		QueueSubmitDesc submitDesc = {};
+		submitDesc.mCmdCount = 1;
+		submitDesc.ppCmds = &pCmd;
+		submitDesc.pSignalFence = pRenderCompleteFences[0];
+		submitDesc.mSubmitDone = true;
+		queueSubmit(pGraphicsQueue, &submitDesc);
 		waitQueueIdle(pGraphicsQueue);
 
+		removeDescriptorSet(pRenderer, pDescriptorSetBRDF);
+#ifndef TARGET_IOS
+        removeDescriptorSet(pRenderer, pDescriptorSetPanoToCube[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetPanoToCube[1]);
+		removeDescriptorSet(pRenderer, pDescriptorSetIrradiance);
+		removeDescriptorSet(pRenderer, pDescriptorSetSpecular[0]);
+		removeDescriptorSet(pRenderer, pDescriptorSetSpecular[1]);
 		removePipeline(pRenderer, pSpecularPipeline);
 		removeRootSignature(pRenderer, pSpecularRootSignature);
 		removeShader(pRenderer, pSpecularShader);
 		removePipeline(pRenderer, pIrradiancePipeline);
 		removeRootSignature(pRenderer, pIrradianceRootSignature);
 		removeShader(pRenderer, pIrradianceShader);
+        removePipeline(pRenderer, pPanoToCubePipeline);
+        removeRootSignature(pRenderer, pPanoToCubeRootSignature);
+        removeShader(pRenderer, pPanoToCubeShader);
+#endif
 		removePipeline(pRenderer, pBRDFIntegrationPipeline);
 		removeRootSignature(pRenderer, pBRDFIntegrationRootSignature);
 		removeShader(pRenderer, pBRDFIntegrationShader);
-		removePipeline(pRenderer, pPanoToCubePipeline);
-		removeRootSignature(pRenderer, pPanoToCubeRootSignature);
-		removeShader(pRenderer, pPanoToCubeShader);
-		removeDescriptorBinder(pRenderer, pPBRDescriptorBinder);
 		removeResource(pPanoSkybox);
 		removeSampler(pRenderer, pSkyboxSampler);
 	}
 
 	void LoadModel(uintptr_t i)
 	{
-		eastl::vector<Vertex>& vertices = pStagingData->mModelVerticesList[i];
-		eastl::vector<uint>&   indices = pStagingData->mModelIndicesList[i];
-		AssimpImporter          importer;
-
-		AssimpImporter::Model model;
-		if (importer.ImportModel(FileSystem::FixPath(pStagingData->mModelList[i], FSR_Meshes).c_str(), &model))
-		{
-			for (size_t i = 0; i < model.mMeshArray.size(); ++i)
-			{
-				AssimpImporter::Mesh* mesh = &model.mMeshArray[i];
-				size_t vertexCount = vertices.size();
-				size_t indexCount = indices.size();
-				vertices.resize(vertexCount + mesh->mPositions.size());
-				indices.resize(indexCount + mesh->mIndices.size());
-
-				for (size_t v = 0; v < mesh->mPositions.size(); ++v)
-				{
-					Vertex& vertex = vertices[vertexCount + v];
-					vertex.mPos = mesh->mPositions[v];
-					vertex.mNormal = mesh->mNormals[v];
-					vertex.mUv = mesh->mUvs[v];
-				}
-
-				for (size_t j = 0; j < mesh->mIndices.size(); ++j)
-					indices[indexCount+j] = mesh->mIndices[j];
-			}
-
-			MeshData* meshData = conf_placement_new<MeshData>(conf_malloc(sizeof(MeshData)));
-			meshData->mVertexCount = (uint)vertices.size();
-			meshData->mIndexCount = (uint)indices.size();
-
-			BufferLoadDesc vertexBufferDesc = {};
-			vertexBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
-			vertexBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-			vertexBufferDesc.mDesc.mSize = sizeof(Vertex) * meshData->mVertexCount;
-			vertexBufferDesc.mDesc.mVertexStride = sizeof(Vertex);
-			vertexBufferDesc.pData = vertices.data();
-			vertexBufferDesc.ppBuffer = &meshData->pVertexBuffer;
-			addResource(&vertexBufferDesc, true);
-
-			if (meshData->mIndexCount > 0)
-			{
-				BufferLoadDesc indexBufferDesc = {};
-				indexBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
-				indexBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-				indexBufferDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_OWN_MEMORY_BIT;
-				indexBufferDesc.mDesc.mSize = sizeof(uint) * meshData->mIndexCount;
-				indexBufferDesc.mDesc.mIndexType = INDEX_TYPE_UINT32;
-				indexBufferDesc.pData = indices.data();
-				indexBufferDesc.ppBuffer = &meshData->pIndexBuffer;
-				addResource(&indexBufferDesc, true);
-			}
-
-			pMeshes[i] = meshData;
-		}
+		PathHandle modelFilePath = fsCopyPathInResourceDirectory(RD_MESHES, pStagingData->mModelList[i].c_str());
+		GeometryLoadDesc loadDesc = {};
+		loadDesc.pFilePath = modelFilePath;
+		loadDesc.ppGeometry = &gMeshes[i];
+		loadDesc.pVertexLayout = &gVertexLayoutDefault;
+		addResource(&loadDesc, NULL, LOAD_PRIORITY_NORMAL);
 	}
 
 	void DestroyModels()
 	{
-		for (int i = 0; i < pMeshes.size(); ++i)
-		{
-			removeResource(pMeshes[i]->pVertexBuffer);
-			if (pMeshes[i]->pIndexBuffer)
-				removeResource(pMeshes[i]->pIndexBuffer);
-			conf_free(pMeshes[i]);
-		}
-		pMeshes.clear();
+		for (int i = 0; i < gMeshes.size(); ++i)
+			removeResource(gMeshes[i]);
+
+		gMeshes.set_capacity(0);
 	}
 
 	void DestroyTextures()
 	{
-		for (size_t i = 0; i < pTextureMaterialMaps.size(); ++i)
-			removeResource(pTextureMaterialMaps[i]);
-		pTextureMaterialMaps.clear();
+		for (size_t i = 0; i < gTextureMaterialMaps.size(); ++i)
+			removeResource(gTextureMaterialMaps[i]);
+		gTextureMaterialMaps.set_capacity(0);
 
-		for (size_t i = 0; i < pTextureMaterialMapsGround.size(); ++i)
-			removeResource(pTextureMaterialMapsGround[i]);
-		pTextureMaterialMapsGround.clear();
+		for (size_t i = 0; i < gTextureMaterialMapsGround.size(); ++i)
+			removeResource(gTextureMaterialMapsGround[i]);
+		gTextureMaterialMapsGround.set_capacity(0);
 	}
 
 	void CreateResources()
@@ -3304,11 +3282,11 @@ class MaterialPlayground: public IApp
 		skyboxVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		skyboxVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		skyboxVbDesc.mDesc.mSize = skyBoxDataSize;
-		skyboxVbDesc.mDesc.mVertexStride = sizeof(float) * 4;
 		skyboxVbDesc.pData = skyBoxPoints;
 		skyboxVbDesc.ppBuffer = &pVertexBufferSkybox;
-		addResource(&skyboxVbDesc, true);
+		addResource(&skyboxVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 
+#if !defined(DIRECT3D11)
 		// Load hair models
 		gUniformDataHairGlobal.mGravity = float4(0.0f, -9.81f, 0.0f, 0.0f);
 		gUniformDataHairGlobal.mWind = float4(0.0f);
@@ -3350,7 +3328,6 @@ class MaterialPlayground: public IApp
 		headTransform.mAttachedBone = 12;
 		gTransforms.push_back(headTransform);
 
-#ifndef DIRECT3D11
 		float gpuPresetScore = (float)((uint)gGPUPresetLevel - GPU_PRESET_LOW) / (float)(GPU_PRESET_ULTRA - GPU_PRESET_LOW);
 
 		// Load all hair meshes
@@ -3411,31 +3388,31 @@ class MaterialPlayground: public IApp
 		staticHairSimulationParameters.mGlobalConstraintStiffness = 1.0f;
 
 		AddHairMesh(
-			HAIR_TYPE_PONYTAIL, pStagingData->tfxAsset[0], "ponytail", "Hair/tail.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_PONYTAIL, "ponytail", "Hair/tail.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&ponytailHairShadingParameters, &ponytailHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_PONYTAIL, pStagingData->tfxAsset[1], "top", "Hair/front_top.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_PONYTAIL, "top", "Hair/front_top.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &stiffHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_PONYTAIL, pStagingData->tfxAsset[2], "side", "Hair/side.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_PONYTAIL, "side", "Hair/side.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &stiffHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_PONYTAIL, pStagingData->tfxAsset[3], "back", "Hair/back.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_PONYTAIL, "back", "Hair/back.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &staticHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_FEMALE_1, pStagingData->tfxAsset[4], "Female hair 1", "Hair/female_hair_1.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_FEMALE_1, "Female hair 1", "Hair/female_hair_1.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &hairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_FEMALE_2, pStagingData->tfxAsset[5], "Female hair 2", "Hair/female_hair_2.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_FEMALE_2, "Female hair 2", "Hair/female_hair_2.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &hairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_FEMALE_3, pStagingData->tfxAsset[6], "Female hair 3", "Hair/female_hair_3.tfx", (uint)(5 * gpuPresetScore), 0.5f, 0,
+			HAIR_TYPE_FEMALE_3, "Female hair 3", "Hair/female_hair_3.gltf", (uint)(5 * gpuPresetScore), 0.5f, 0,
 			&hairShadingParameters, &stiffHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_FEMALE_6, pStagingData->tfxAsset[7], "female hair 6 top", "Hair/female_hair_6_top.tfx", (uint)(5 * gpuPresetScore),
+			HAIR_TYPE_FEMALE_6, "female hair 6 top", "Hair/female_hair_6_top.gltf", (uint)(5 * gpuPresetScore),
 			0.5f, 0, &hairShadingParameters, &staticHairSimulationParameters);
 		AddHairMesh(
-			HAIR_TYPE_FEMALE_6, pStagingData->tfxAsset[8], "female hair 6 tail", "Hair/female_hair_6_tail.tfx", (uint)(5 * gpuPresetScore),
+			HAIR_TYPE_FEMALE_6, "female hair 6 tail", "Hair/female_hair_6_tail.gltf", (uint)(5 * gpuPresetScore),
 			0.5f, 0, &ponytailHairShadingParameters, &ponytailHairSimulationParameters);
 #endif
 
@@ -3452,10 +3429,9 @@ class MaterialPlayground: public IApp
 		jointVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		jointVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		jointVbDesc.mDesc.mSize = jointDataSize;
-		jointVbDesc.mDesc.mVertexStride = sizeof(float) * 6;
 		jointVbDesc.pData = pStagingData->pJointPoints;
 		jointVbDesc.ppBuffer = &pVertexBufferSkeletonJoint;
-		addResource(&jointVbDesc, true);
+		addResource(&jointVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Generate bone vertex buffer
 		generateBonePoints(&pStagingData->pBonePoints, &gVertexCountSkeletonBone, boneWidthRatio);
@@ -3465,10 +3441,9 @@ class MaterialPlayground: public IApp
 		boneVbDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_VERTEX_BUFFER;
 		boneVbDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
 		boneVbDesc.mDesc.mSize = boneDataSize;
-		boneVbDesc.mDesc.mVertexStride = sizeof(float) * 6;
 		boneVbDesc.pData = pStagingData->pBonePoints;
 		boneVbDesc.ppBuffer = &pVertexBufferSkeletonBone;
-		addResource(&boneVbDesc);
+		addResource(&boneVbDesc, NULL, LOAD_PRIORITY_NORMAL);
 	}
 
 	void DestroyResources()
@@ -3489,7 +3464,7 @@ class MaterialPlayground: public IApp
 		surfaceUBDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		surfaceUBDesc.pData = NULL;
 		surfaceUBDesc.ppBuffer = &pUniformBufferGroundPlane;
-		addResource(&surfaceUBDesc);
+		addResource(&surfaceUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Nameplate uniform buffers
 		BufferLoadDesc nameplateUBDesc = {};
@@ -3501,7 +3476,7 @@ class MaterialPlayground: public IApp
 		for (int i = 0; i < MATERIAL_INSTANCE_COUNT; ++i)
 		{
 			nameplateUBDesc.ppBuffer = &pUniformBufferNamePlates[i];
-			addResource(&nameplateUBDesc);
+			addResource(&nameplateUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		// Create a uniform buffer per mat ball
@@ -3516,7 +3491,7 @@ class MaterialPlayground: public IApp
 				matBallUBDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 				matBallUBDesc.pData = NULL;
 				matBallUBDesc.ppBuffer = &pUniformBufferMatBall[frameIdx][i];
-				addResource(&matBallUBDesc);
+				addResource(&matBallUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 			}
 		}
 
@@ -3530,18 +3505,18 @@ class MaterialPlayground: public IApp
 		for (uint i = 0; i < gImageCount; ++i)
 		{
 			cameraUBDesc.ppBuffer = &pUniformBufferCamera[i];
-			addResource(&cameraUBDesc);
+			addResource(&cameraUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 			cameraUBDesc.ppBuffer = &pUniformBufferCameraSkybox[i];
-			addResource(&cameraUBDesc);
+			addResource(&cameraUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 			cameraUBDesc.ppBuffer = &pUniformBufferCameraShadowPass[i];
-			addResource(&cameraUBDesc);
+			addResource(&cameraUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 			for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 			{
 				for (int j = 0; j < MAX_NUM_DIRECTIONAL_LIGHTS; ++j)
 				{
 					cameraUBDesc.ppBuffer = &pUniformBufferCameraHairShadows[i][hairType][j];
-					addResource(&cameraUBDesc);
+					addResource(&cameraUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 				}
 			}
 		}
@@ -3555,7 +3530,7 @@ class MaterialPlayground: public IApp
 		lightsUBDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		lightsUBDesc.pData = NULL;
 		lightsUBDesc.ppBuffer = &pUniformBufferPointLights;
-		addResource(&lightsUBDesc);
+		addResource(&lightsUBDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Uniform buffer for directional light data
 		BufferLoadDesc directionalLightBufferDesc = {};
@@ -3565,7 +3540,7 @@ class MaterialPlayground: public IApp
 		directionalLightBufferDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		directionalLightBufferDesc.pData = NULL;
 		directionalLightBufferDesc.ppBuffer = &pUniformBufferDirectionalLights;
-		addResource(&directionalLightBufferDesc);
+		addResource(&directionalLightBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 
 		// Uniform buffer for hair data
 		BufferLoadDesc hairGlobalBufferDesc = {};
@@ -3575,7 +3550,7 @@ class MaterialPlayground: public IApp
 		hairGlobalBufferDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
 		hairGlobalBufferDesc.pData = NULL;
 		hairGlobalBufferDesc.ppBuffer = &pUniformBufferHairGlobal;
-		addResource(&hairGlobalBufferDesc);
+		addResource(&hairGlobalBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 	}
 
 	void DestroyUniformBuffers()
@@ -3631,8 +3606,10 @@ class MaterialPlayground: public IApp
 			//if not enough materials specified then set pbrMaterials to -1
 
 			gUniformDataMatBall[i] = gUniformDataObject;
-			BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferMatBall[gFrameIndex][i], &gUniformDataObject };
-			updateResource(&objBuffUpdateDesc);
+			BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferMatBall[gFrameIndex][i] };
+			beginUpdateResource(&objBuffUpdateDesc);
+			*(UniformObjData*)objBuffUpdateDesc.pMappedData = gUniformDataObject;
+			endUpdateResource(&objBuffUpdateDesc, NULL);
 			roughDelta -= .25f;
 
 			{
@@ -3644,8 +3621,10 @@ class MaterialPlayground: public IApp
 				gUniformDataObject.mRoughness = 0.4f;
 				gUniformDataObject.mAlbedo = float3(0.04f);
 				gUniformDataObject.textureConfig = 0;
-				BufferUpdateDesc objBuffUpdateDesc1 = { pUniformBufferNamePlates[i], &gUniformDataObject };
-				updateResource(&objBuffUpdateDesc1);
+				BufferUpdateDesc objBuffUpdateDesc1 = { pUniformBufferNamePlates[i] };
+				beginUpdateResource(&objBuffUpdateDesc1);
+				*(UniformObjData*)objBuffUpdateDesc1.pMappedData = gUniformDataObject;
+				endUpdateResource(&objBuffUpdateDesc1, NULL);
 
 				//text
 				const float ANGLE_OFFSET = 0.6f;    // angle offset to tilt the text shown on the plates for materials
@@ -3665,8 +3644,10 @@ class MaterialPlayground: public IApp
 		gUniformDataObject.textureConfig = ETextureConfigFlags::TEXTURE_CONFIG_FLAGS_ALL;
 		gUniformDataObject.tiling = float2(groundScale.getX() / groundScale.getZ(), 1.0f);
 		//gUniformDataObject.textureConfig = ETextureConfigFlags::NORMAL | ETextureConfigFlags::METALLIC | ETextureConfigFlags::AO | ETextureConfigFlags::ROUGHNESS;
-		BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferGroundPlane, &gUniformDataObject };
-		updateResource(&objBuffUpdateDesc);
+		BufferUpdateDesc objBuffUpdateDesc = { pUniformBufferGroundPlane };
+		beginUpdateResource(&objBuffUpdateDesc);
+		*(UniformObjData*)objBuffUpdateDesc.pMappedData = gUniformDataObject;
+		endUpdateResource(&objBuffUpdateDesc, NULL);
 
 		// Directional light
 		gUniformDataDirectionalLights.mDirectionalLights[0].mDirection = v3ToF3(normalize(f3Tov3(gDirectionalLightPosition)));
@@ -3677,40 +3658,70 @@ class MaterialPlayground: public IApp
 		//gUniformDataDirectionalLights.mDirectionalLights[0].mColor = float3(255.0f, 0.5f, 0.5f) / 255.0f;
 		gUniformDataDirectionalLights.mDirectionalLights[0].mIntensity = 10.0f;
 		gUniformDataDirectionalLights.mNumDirectionalLights = 1;
-		BufferUpdateDesc directionalLightsBufferUpdateDesc = { pUniformBufferDirectionalLights, &gUniformDataDirectionalLights };
-		updateResource(&directionalLightsBufferUpdateDesc);
+		BufferUpdateDesc directionalLightsBufferUpdateDesc = { pUniformBufferDirectionalLights };
+		beginUpdateResource(&directionalLightsBufferUpdateDesc);
+		*(UniformDataDirectionalLights*)directionalLightsBufferUpdateDesc.pMappedData = gUniformDataDirectionalLights;
+		endUpdateResource(&directionalLightsBufferUpdateDesc, NULL);
 
 		// Point lights (currently none)
 		gUniformDataPointLights.mNumPointLights = 0;
-		BufferUpdateDesc pointLightBufferUpdateDesc = { pUniformBufferPointLights, &gUniformDataPointLights };
-		updateResource(&pointLightBufferUpdateDesc);
+		BufferUpdateDesc pointLightBufferUpdateDesc = { pUniformBufferPointLights };
+		beginUpdateResource(&pointLightBufferUpdateDesc);
+		*(UniformDataPointLights*)pointLightBufferUpdateDesc.pMappedData = gUniformDataPointLights;
+		endUpdateResource(&pointLightBufferUpdateDesc, NULL);
 	}
 
 	static void AddHairMesh(
-		HairType type, TFXAsset& tfxAsset, const char* name, const char* tfxFile, uint numFollowHairs, float maxRadiusAroundGuideHair, uint transform,
+		HairType type, const char* name, const char* tfxFile, uint numFollowHairs, float maxRadiusAroundGuideHair, uint transform,
 		HairSectionShadingParameters* shadingParameters, HairSimulationParameters* simulationParameters)
 	{
-		if (!TFXImporter::ImportTFX(
-				tfxFile, FSRoot::FSR_OtherFiles, numFollowHairs, simulationParameters->mTipSeperationFactor, maxRadiusAroundGuideHair,
-				&tfxAsset))
-			return;
-
 		HairBuffer hairBuffer = {};
 
-		hairBuffer.mName = name;
+		VertexLayout layout = {};
+		layout.mAttribCount = 7;
+		layout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
+		layout.mAttribs[0].mBinding = 0;
+		layout.mAttribs[1].mSemantic = SEMANTIC_TANGENT;
+		layout.mAttribs[1].mBinding = 1;
+		layout.mAttribs[2].mSemantic = SEMANTIC_TEXCOORD0;
+		layout.mAttribs[2].mBinding = 2;
+		layout.mAttribs[3].mSemantic = SEMANTIC_TEXCOORD2;
+		layout.mAttribs[3].mBinding = 4;
+		layout.mAttribs[4].mSemantic = SEMANTIC_TEXCOORD3;
+		layout.mAttribs[4].mBinding = 5;
+		layout.mAttribs[5].mSemantic = SEMANTIC_TEXCOORD6;
+		layout.mAttribs[5].mBinding = 8;
+		layout.mAttribs[6].mSemantic = SEMANTIC_TEXCOORD7;
+		layout.mAttribs[6].mBinding = 9;
+
+        PathHandle filePath = fsCopyPathInResourceDirectory(RD_OTHER_FILES, tfxFile);
+		SyncToken token = {};
+		GeometryLoadDesc loadDesc = {};
+		loadDesc.pFilePath = filePath;
+		loadDesc.pVertexLayout = &layout;
+		loadDesc.mFlags = GEOMETRY_LOAD_FLAG_STRUCTURED_BUFFERS;
+		loadDesc.ppGeometry = &hairBuffer.pGeom;
+		addResource(&loadDesc, &token, LOAD_PRIORITY_HIGH);
+		waitForToken(&token);
+
+		hairBuffer.pBufferTriangleIndices = hairBuffer.pGeom->pIndexBuffer;
+		hairBuffer.pBufferHairVertexPositions = hairBuffer.pGeom->pVertexBuffers[0];
+		hairBuffer.pBufferHairVertexTangents = hairBuffer.pGeom->pVertexBuffers[1];
+		hairBuffer.pBufferHairGlobalRotations = hairBuffer.pGeom->pVertexBuffers[2];
+		hairBuffer.pBufferHairRefsInLocalFrame = hairBuffer.pGeom->pVertexBuffers[3];
+		hairBuffer.pBufferFollowHairRootOffsets = hairBuffer.pGeom->pVertexBuffers[4];
+		hairBuffer.pBufferHairThicknessCoefficients = hairBuffer.pGeom->pVertexBuffers[5];
+		hairBuffer.pBufferHairRestLenghts = hairBuffer.pGeom->pVertexBuffers[6];
 
 		BufferLoadDesc vertexPositionsBufferDesc = {};
 		vertexPositionsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
 		vertexPositionsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		vertexPositionsBufferDesc.mDesc.mElementCount = tfxAsset.mPositions.size();
+		vertexPositionsBufferDesc.mDesc.mElementCount = hairBuffer.pGeom->mVertexCount;
 		vertexPositionsBufferDesc.mDesc.mStructStride = sizeof(float4);
-		vertexPositionsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
+		vertexPositionsBufferDesc.mDesc.mFormat = TinyImageFormat_UNDEFINED;
 		vertexPositionsBufferDesc.mDesc.mSize =
 			vertexPositionsBufferDesc.mDesc.mElementCount * vertexPositionsBufferDesc.mDesc.mStructStride;
-		vertexPositionsBufferDesc.pData = tfxAsset.mPositions.data();
-		vertexPositionsBufferDesc.ppBuffer = &hairBuffer.pBufferHairVertexPositions;
 		vertexPositionsBufferDesc.mDesc.pDebugName = L"Hair vertex positions";
-		addResource(&vertexPositionsBufferDesc, true);
 
 		for (int i = 0; i < 3; ++i)
 		{
@@ -3718,97 +3729,8 @@ class MaterialPlayground: public IApp
 				(DescriptorType)(DESCRIPTOR_TYPE_RW_BUFFER | (i == 0 ? DESCRIPTOR_TYPE_BUFFER : 0));
 			vertexPositionsBufferDesc.mDesc.pDebugName = L"Hair simulation vertex positions";
 			vertexPositionsBufferDesc.ppBuffer = &hairBuffer.pBufferHairSimulationVertexPositions[i];
-			addResource(&vertexPositionsBufferDesc, true);
+			addResource(&vertexPositionsBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
-
-		BufferLoadDesc vertexTangentsBufferDesc = {};
-		vertexTangentsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_RW_BUFFER | DESCRIPTOR_TYPE_BUFFER;
-		vertexTangentsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		vertexTangentsBufferDesc.mDesc.mElementCount = tfxAsset.mTangents.size();
-		vertexTangentsBufferDesc.mDesc.mStructStride = sizeof(float4);
-		vertexTangentsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		vertexTangentsBufferDesc.mDesc.mSize = vertexTangentsBufferDesc.mDesc.mElementCount * vertexTangentsBufferDesc.mDesc.mStructStride;
-		vertexTangentsBufferDesc.pData = tfxAsset.mTangents.data();
-		vertexTangentsBufferDesc.ppBuffer = &hairBuffer.pBufferHairVertexTangents;
-		vertexTangentsBufferDesc.mDesc.pDebugName = L"Hair vertex tangents";
-		addResource(&vertexTangentsBufferDesc, true);
-
-		BufferLoadDesc indexBufferDesc = {};
-		indexBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
-		indexBufferDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_OWN_MEMORY_BIT;
-		indexBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		indexBufferDesc.mDesc.mIndexType = INDEX_TYPE_UINT32;
-		indexBufferDesc.mDesc.mElementCount = tfxAsset.mTriangleIndices.size();
-		indexBufferDesc.mDesc.mStructStride = sizeof(uint);
-		indexBufferDesc.mDesc.mSize = indexBufferDesc.mDesc.mElementCount * indexBufferDesc.mDesc.mStructStride;
-		indexBufferDesc.pData = tfxAsset.mTriangleIndices.data();
-		indexBufferDesc.ppBuffer = &hairBuffer.pBufferTriangleIndices;
-		indexBufferDesc.mDesc.pDebugName = L"Index buffer hair";
-		addResource(&indexBufferDesc, true);
-
-		BufferLoadDesc restLengthsBufferDesc = {};
-		restLengthsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
-		restLengthsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		restLengthsBufferDesc.mDesc.mElementCount = tfxAsset.mRestLengths.size();
-		restLengthsBufferDesc.mDesc.mStructStride = sizeof(float);
-		restLengthsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		restLengthsBufferDesc.mDesc.mSize = restLengthsBufferDesc.mDesc.mElementCount * restLengthsBufferDesc.mDesc.mStructStride;
-		restLengthsBufferDesc.pData = tfxAsset.mRestLengths.data();
-		restLengthsBufferDesc.ppBuffer = &hairBuffer.pBufferHairRestLenghts;
-		restLengthsBufferDesc.mDesc.pDebugName = L"Hair rest lenghts";
-		addResource(&restLengthsBufferDesc, true);
-
-		BufferLoadDesc globalRotationsBufferDesc = {};
-		globalRotationsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
-		globalRotationsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		globalRotationsBufferDesc.mDesc.mElementCount = tfxAsset.mGlobalRotations.size();
-		globalRotationsBufferDesc.mDesc.mStructStride = sizeof(float4);
-		globalRotationsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		globalRotationsBufferDesc.mDesc.mSize =
-			globalRotationsBufferDesc.mDesc.mElementCount * globalRotationsBufferDesc.mDesc.mStructStride;
-		globalRotationsBufferDesc.pData = tfxAsset.mGlobalRotations.data();
-		globalRotationsBufferDesc.ppBuffer = &hairBuffer.pBufferHairGlobalRotations;
-		globalRotationsBufferDesc.mDesc.pDebugName = L"Hair global rotations";
-		addResource(&globalRotationsBufferDesc, true);
-
-		BufferLoadDesc refVecsInLocalFrameBufferDesc = {};
-		refVecsInLocalFrameBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
-		refVecsInLocalFrameBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		refVecsInLocalFrameBufferDesc.mDesc.mElementCount = tfxAsset.mRefVectors.size();
-		refVecsInLocalFrameBufferDesc.mDesc.mStructStride = sizeof(float4);
-		refVecsInLocalFrameBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		refVecsInLocalFrameBufferDesc.mDesc.mSize =
-			refVecsInLocalFrameBufferDesc.mDesc.mElementCount * refVecsInLocalFrameBufferDesc.mDesc.mStructStride;
-		refVecsInLocalFrameBufferDesc.pData = tfxAsset.mRefVectors.data();
-		refVecsInLocalFrameBufferDesc.ppBuffer = &hairBuffer.pBufferHairRefsInLocalFrame;
-		refVecsInLocalFrameBufferDesc.mDesc.pDebugName = L"Hair refs in local frame";
-		addResource(&refVecsInLocalFrameBufferDesc, true);
-
-		BufferLoadDesc followHairRootOffsetsBufferDesc = {};
-		followHairRootOffsetsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
-		followHairRootOffsetsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		followHairRootOffsetsBufferDesc.mDesc.mElementCount = tfxAsset.mFollowRootOffsets.size();
-		followHairRootOffsetsBufferDesc.mDesc.mStructStride = sizeof(float4);
-		followHairRootOffsetsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		followHairRootOffsetsBufferDesc.mDesc.mSize =
-			followHairRootOffsetsBufferDesc.mDesc.mElementCount * followHairRootOffsetsBufferDesc.mDesc.mStructStride;
-		followHairRootOffsetsBufferDesc.pData = tfxAsset.mFollowRootOffsets.data();
-		followHairRootOffsetsBufferDesc.ppBuffer = &hairBuffer.pBufferFollowHairRootOffsets;
-		followHairRootOffsetsBufferDesc.mDesc.pDebugName = L"Follow hair root offsets";
-		addResource(&followHairRootOffsetsBufferDesc, true);
-
-		BufferLoadDesc thicknessCoefficientsBufferDesc = {};
-		thicknessCoefficientsBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER;
-		thicknessCoefficientsBufferDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_ONLY;
-		thicknessCoefficientsBufferDesc.mDesc.mElementCount = tfxAsset.mThicknessCoeffs.size();
-		thicknessCoefficientsBufferDesc.mDesc.mStructStride = sizeof(float);
-		thicknessCoefficientsBufferDesc.mDesc.mFormat = ImageFormat::NONE;
-		thicknessCoefficientsBufferDesc.mDesc.mSize =
-			thicknessCoefficientsBufferDesc.mDesc.mElementCount * thicknessCoefficientsBufferDesc.mDesc.mStructStride;
-		thicknessCoefficientsBufferDesc.pData = tfxAsset.mThicknessCoeffs.data();
-		thicknessCoefficientsBufferDesc.ppBuffer = &hairBuffer.pBufferHairThicknessCoefficients;
-		thicknessCoefficientsBufferDesc.mDesc.pDebugName = L"Hair thickness coefficients";
-		addResource(&thicknessCoefficientsBufferDesc, true);
 
 		BufferLoadDesc hairShadingBufferDesc = {};
 		hairShadingBufferDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3819,7 +3741,7 @@ class MaterialPlayground: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			hairShadingBufferDesc.ppBuffer = &hairBuffer.pUniformBufferHairShading[i];
-			addResource(&hairShadingBufferDesc, true);
+			addResource(&hairShadingBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		BufferLoadDesc hairSimulationBufferDesc = {};
@@ -3831,15 +3753,15 @@ class MaterialPlayground: public IApp
 		for (uint32_t i = 0; i < gImageCount; ++i)
 		{
 			hairSimulationBufferDesc.ppBuffer = &hairBuffer.pUniformBufferHairSimulation[i];
-			addResource(&hairSimulationBufferDesc, true);
+			addResource(&hairSimulationBufferDesc, NULL, LOAD_PRIORITY_NORMAL);
 		}
 
 		hairBuffer.mUniformDataHairShading.mColorBias = shadingParameters->mColorBias;
 		hairBuffer.mUniformDataHairShading.mStrandRadius = shadingParameters->mStrandRadius;
 		hairBuffer.mUniformDataHairShading.mStrandSpacing = shadingParameters->mStrandSpacing;
-		hairBuffer.mUniformDataHairShading.mNumVerticesPerStrand = tfxAsset.mNumVerticesPerStrand;
+		hairBuffer.mUniformDataHairShading.mNumVerticesPerStrand = hairBuffer.pGeom->mHair.mVertexCountPerStrand;
 
-		hairBuffer.mUniformDataHairSimulation.mNumStrandsPerThreadGroup = 64 / tfxAsset.mNumVerticesPerStrand;
+		hairBuffer.mUniformDataHairSimulation.mNumStrandsPerThreadGroup = 64 / hairBuffer.pGeom->mHair.mVertexCountPerStrand;
 		hairBuffer.mUniformDataHairSimulation.mNumFollowHairsPerGuideHair = numFollowHairs;
 		hairBuffer.mUniformDataHairSimulation.mDamping = clamp(simulationParameters->mDamping, 0.0f, 0.1f);
 		hairBuffer.mUniformDataHairSimulation.mGlobalConstraintStiffness =
@@ -3853,14 +3775,14 @@ class MaterialPlayground: public IApp
 		hairBuffer.mUniformDataHairSimulation.mLocalConstraintIterations = simulationParameters->mLocalConstraintIterations;
 		hairBuffer.mUniformDataHairSimulation.mLengthConstraintIterations = simulationParameters->mLengthConstraintIterations;
 		hairBuffer.mUniformDataHairSimulation.mTipSeperationFactor = simulationParameters->mTipSeperationFactor;
-		hairBuffer.mUniformDataHairSimulation.mNumVerticesPerStrand = tfxAsset.mNumVerticesPerStrand;
+		hairBuffer.mUniformDataHairSimulation.mNumVerticesPerStrand = hairBuffer.pGeom->mHair.mVertexCountPerStrand;
 #if HAIR_MAX_CAPSULE_COUNT > 0
 		hairBuffer.mUniformDataHairSimulation.mCapsuleCount = simulationParameters->mCapsuleCount;
 #endif
 
-		hairBuffer.mIndexCountHair = (uint)(tfxAsset.mTriangleIndices.size());
-		hairBuffer.mTotalVertexCount = (uint)tfxAsset.mPositions.size();
-		hairBuffer.mNumGuideStrands = (uint)tfxAsset.mNumGuideStrands;
+		hairBuffer.mIndexCountHair = (uint)(hairBuffer.pGeom->mIndexCount);
+		hairBuffer.mTotalVertexCount = (uint)hairBuffer.pGeom->mVertexCount;
+		hairBuffer.mNumGuideStrands = (uint)hairBuffer.pGeom->mHair.mGuideCountPerStrand;
 		hairBuffer.mStrandRadius = shadingParameters->mStrandRadius;
 		hairBuffer.mStrandSpacing = shadingParameters->mStrandSpacing;
 		hairBuffer.mTransform = transform;
@@ -3881,23 +3803,16 @@ class MaterialPlayground: public IApp
 	{
 		for (size_t i = 0; i < gHair.size(); ++i)
 		{
-			removeResource(gHair[i].pBufferHairVertexPositions);
+			removeResource(gHair[i].pGeom);
 			for (int j = 0; j < 3; ++j)
 				removeResource(gHair[i].pBufferHairSimulationVertexPositions[j]);
-			removeResource(gHair[i].pBufferHairVertexTangents);
-			removeResource(gHair[i].pBufferTriangleIndices);
-			removeResource(gHair[i].pBufferHairRestLenghts);
-			removeResource(gHair[i].pBufferHairGlobalRotations);
-			removeResource(gHair[i].pBufferHairRefsInLocalFrame);
-			removeResource(gHair[i].pBufferFollowHairRootOffsets);
-			removeResource(gHair[i].pBufferHairThicknessCoefficients);
 			for (uint32_t j = 0; j < gImageCount; ++j)
 			{
 				removeResource(gHair[i].pUniformBufferHairShading[j]);
 				removeResource(gHair[i].pUniformBufferHairSimulation[j]);
 			}
 		}
-		gHair.clear();
+		gHair.set_capacity(0);
 	}
 
 	static void SetHairColor(HairBuffer* hairBuffer, HairColor hairColor)
@@ -3978,7 +3893,7 @@ class MaterialPlayground: public IApp
 
 	void LoadAnimations()
 	{
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		// Create skeleton batcher
 		SkeletonRenderDesc skeletonRenderDesc = {};
 		skeletonRenderDesc.mRenderer = pRenderer;
@@ -3989,21 +3904,25 @@ class MaterialPlayground: public IApp
 		skeletonRenderDesc.mDrawBones = true;
 		skeletonRenderDesc.mBoneVertexBuffer = pVertexBufferSkeletonBone;
 		skeletonRenderDesc.mNumBonePoints = gVertexCountSkeletonBone;
+		skeletonRenderDesc.mBoneVertexStride = sizeof(float) * 6;
+		skeletonRenderDesc.mJointVertexStride = sizeof(float) * 6;
 
 		gSkeletonBatcher.Initialize(skeletonRenderDesc);
 
 		// Load rigs
-		eastl::string rigPath = FileSystem::FixPath("stickFigure/skeleton.ozz", FSR_Animation);
+        PathHandle rigPath = fsCopyPathInResourceDirectory(RD_ANIMATIONS, "stickFigure/skeleton.ozz");
 		for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 		{
-			gAnimationRig[hairType].Initialize(rigPath.c_str());
+			gAnimationRig[hairType].Initialize(rigPath);
 			gSkeletonBatcher.AddRig(&gAnimationRig[hairType]);
 		}
 
 		// Load clips
-		gAnimationClipNeckCrack.Initialize(
-			FileSystem::FixPath("stickFigure/animations/neckCrack.ozz", FSR_Animation).c_str(), &gAnimationRig[0]);
-		gAnimationClipStand.Initialize(FileSystem::FixPath("stickFigure/animations/stand.ozz", FSR_Animation).c_str(), &gAnimationRig[0]);
+        PathHandle neckCrackPath = fsCopyPathInResourceDirectory(RD_ANIMATIONS, "stickFigure/animations/neckCrack.ozz");
+		gAnimationClipNeckCrack.Initialize(neckCrackPath, &gAnimationRig[0]);
+        
+        PathHandle standPath = fsCopyPathInResourceDirectory(RD_ANIMATIONS, "stickFigure/animations/stand.ozz");
+		gAnimationClipStand.Initialize(standPath, &gAnimationRig[0]);
 
 		for (uint hairType = 0; hairType < HAIR_TYPE_COUNT; ++hairType)
 		{
@@ -4035,7 +3954,7 @@ class MaterialPlayground: public IApp
 
 	void DestroyAnimations()
 	{
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		// Destroy clips
 		gAnimationClipNeckCrack.Destroy();
 		gAnimationClipStand.Destroy();
@@ -4058,14 +3977,11 @@ class MaterialPlayground: public IApp
 	//--------------------------------------------------------------------------------------------
 	void CreatePipelines()
 	{
-
-		bool no_srgb = false;
-
 		// Create vertex layouts
 		VertexLayout skyboxVertexLayout = {};
 		skyboxVertexLayout.mAttribCount = 1;
 		skyboxVertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		skyboxVertexLayout.mAttribs[0].mFormat = ImageFormat::RGBA32F;
+		skyboxVertexLayout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
 		skyboxVertexLayout.mAttribs[0].mBinding = 0;
 		skyboxVertexLayout.mAttribs[0].mLocation = 0;
 		skyboxVertexLayout.mAttribs[0].mOffset = 0;
@@ -4073,38 +3989,20 @@ class MaterialPlayground: public IApp
 		VertexLayout shadowPassVertexLayout = {};
 		shadowPassVertexLayout.mAttribCount = 1;
 		shadowPassVertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		shadowPassVertexLayout.mAttribs[0].mFormat = ImageFormat::RGB32F;
+		shadowPassVertexLayout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
 		shadowPassVertexLayout.mAttribs[0].mBinding = 0;
 		shadowPassVertexLayout.mAttribs[0].mLocation = 0;
 		shadowPassVertexLayout.mAttribs[0].mOffset = 0;
 
-		VertexLayout defaultVertexLayout = {};
-		defaultVertexLayout.mAttribCount = 3;
-		defaultVertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		defaultVertexLayout.mAttribs[0].mFormat = ImageFormat::RGB32F;
-		defaultVertexLayout.mAttribs[0].mBinding = 0;
-		defaultVertexLayout.mAttribs[0].mLocation = 0;
-		defaultVertexLayout.mAttribs[0].mOffset = 0;
-		defaultVertexLayout.mAttribs[1].mSemantic = SEMANTIC_NORMAL;
-		defaultVertexLayout.mAttribs[1].mFormat = ImageFormat::RGB32F;
-		defaultVertexLayout.mAttribs[1].mLocation = 1;
-		defaultVertexLayout.mAttribs[1].mBinding = 0;
-		defaultVertexLayout.mAttribs[1].mOffset = 3 * sizeof(float);
-		defaultVertexLayout.mAttribs[2].mSemantic = SEMANTIC_TEXCOORD0;
-		defaultVertexLayout.mAttribs[2].mFormat = ImageFormat::RG32F;
-		defaultVertexLayout.mAttribs[2].mLocation = 2;
-		defaultVertexLayout.mAttribs[2].mBinding = 0;
-		defaultVertexLayout.mAttribs[2].mOffset = 6 * sizeof(float);
-
 		VertexLayout skeletonVertexLayout = {};
 		skeletonVertexLayout.mAttribCount = 2;
 		skeletonVertexLayout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
-		skeletonVertexLayout.mAttribs[0].mFormat = ImageFormat::RGB32F;
+		skeletonVertexLayout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
 		skeletonVertexLayout.mAttribs[0].mBinding = 0;
 		skeletonVertexLayout.mAttribs[0].mLocation = 0;
 		skeletonVertexLayout.mAttribs[0].mOffset = 0;
 		skeletonVertexLayout.mAttribs[1].mSemantic = SEMANTIC_NORMAL;
-		skeletonVertexLayout.mAttribs[1].mFormat = ImageFormat::RGB32F;
+		skeletonVertexLayout.mAttribs[1].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
 		skeletonVertexLayout.mAttribs[1].mLocation = 1;
 		skeletonVertexLayout.mAttribs[1].mBinding = 0;
 		skeletonVertexLayout.mAttribs[1].mOffset = 3 * sizeof(float);
@@ -4114,142 +4012,204 @@ class MaterialPlayground: public IApp
 		graphicsPipelineDesc.mType = PIPELINE_TYPE_GRAPHICS;
 		GraphicsPipelineDesc& pipelineSettings = graphicsPipelineDesc.mGraphicsDesc;
 
+		RasterizerStateDesc rasterizerStateCullNoneDesc = {};
+		rasterizerStateCullNoneDesc.mCullMode = CULL_MODE_NONE;
+
+		RasterizerStateDesc rasterizerStateDesc = {};
+		rasterizerStateDesc.mCullMode = CULL_MODE_BACK;
+
+		DepthStateDesc depthStateDesc = {};
+		depthStateDesc.mDepthTest = true;
+		depthStateDesc.mDepthWrite = true;
+		depthStateDesc.mDepthFunc = CMP_LEQUAL;
+
+		DepthStateDesc depthStateDisableDesc = {};
+		depthStateDisableDesc.mDepthTest = false;
+		depthStateDisableDesc.mDepthWrite = false;
+		depthStateDisableDesc.mDepthFunc = CMP_LEQUAL;
+
+		DepthStateDesc depthStateNoWriteDesc = {};
+		depthStateNoWriteDesc.mDepthTest = true;
+		depthStateNoWriteDesc.mDepthWrite = false;
+		depthStateNoWriteDesc.mDepthFunc = CMP_LEQUAL;
+
+		DepthStateDesc depthStateDepthResolveDesc = {};
+		depthStateDepthResolveDesc.mDepthTest = true;
+		depthStateDepthResolveDesc.mDepthWrite = true;
+		depthStateDepthResolveDesc.mDepthFunc = CMP_LEQUAL;
+
+		BlendStateDesc blendStateDesc = {};
+		blendStateDesc.mSrcFactors[0] = BC_SRC_ALPHA;
+		blendStateDesc.mDstFactors[0] = BC_ONE_MINUS_SRC_ALPHA;
+		blendStateDesc.mBlendModes[0] = BM_ADD;
+		blendStateDesc.mSrcAlphaFactors[0] = BC_ONE;
+		blendStateDesc.mDstAlphaFactors[0] = BC_ZERO;
+		blendStateDesc.mBlendAlphaModes[0] = BM_ADD;
+		blendStateDesc.mMasks[0] = ALL;
+		blendStateDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
+		blendStateDesc.mIndependentBlend = false;
+
+		BlendStateDesc blendStateDepthPeelingDesc = {};
+		blendStateDepthPeelingDesc.mSrcFactors[0] = BC_ZERO;
+		blendStateDepthPeelingDesc.mDstFactors[0] = BC_SRC_COLOR;
+		blendStateDepthPeelingDesc.mBlendModes[0] = BM_ADD;
+		blendStateDepthPeelingDesc.mSrcAlphaFactors[0] = BC_ZERO;
+		blendStateDepthPeelingDesc.mDstAlphaFactors[0] = BC_SRC_ALPHA;
+		blendStateDepthPeelingDesc.mBlendAlphaModes[0] = BM_ADD;
+		blendStateDepthPeelingDesc.mMasks[0] = RED;
+		blendStateDepthPeelingDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
+		blendStateDepthPeelingDesc.mIndependentBlend = false;
+
+		BlendStateDesc blendStateAddDesc = {};
+		blendStateAddDesc.mSrcFactors[0] = BC_ONE;
+		blendStateAddDesc.mDstFactors[0] = BC_ONE;
+		blendStateAddDesc.mBlendModes[0] = BM_ADD;
+		blendStateAddDesc.mSrcAlphaFactors[0] = BC_ONE;
+		blendStateAddDesc.mDstAlphaFactors[0] = BC_ONE;
+		blendStateAddDesc.mBlendAlphaModes[0] = BM_ADD;
+		blendStateAddDesc.mMasks[0] = ALL;
+		blendStateAddDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
+		blendStateAddDesc.mIndependentBlend = false;
+
+		BlendStateDesc blendStateColorResolveDesc = {};
+		blendStateColorResolveDesc.mSrcFactors[0] = BC_ONE;
+		blendStateColorResolveDesc.mDstFactors[0] = BC_SRC_ALPHA;
+		blendStateColorResolveDesc.mBlendModes[0] = BM_ADD;
+		blendStateColorResolveDesc.mSrcAlphaFactors[0] = BC_ZERO;
+		blendStateColorResolveDesc.mDstAlphaFactors[0] = BC_ZERO;
+		blendStateColorResolveDesc.mBlendAlphaModes[0] = BM_ADD;
+		blendStateColorResolveDesc.mMasks[0] = ALL;
+		blendStateColorResolveDesc.mRenderTargetMask = BLEND_STATE_TARGET_0;
+		blendStateColorResolveDesc.mIndependentBlend = false;
+
 		// skybox
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
 		pipelineSettings.pDepthState = NULL;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = ImageFormat::NONE;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = TinyImageFormat_UNDEFINED;
 		pipelineSettings.pRootSignature = pRootSignatureSkybox;
 		pipelineSettings.pShaderProgram = pShaderSkybox;
 		pipelineSettings.pVertexLayout = &skyboxVertexLayout;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineSkybox);
 
 		// shadow pass
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo      = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount  = 0;
-		pipelineSettings.pDepthState         = pDepthStateEnable;
+		pipelineSettings.pDepthState         = &depthStateDesc;
 		pipelineSettings.pColorFormats       = NULL;
-		pipelineSettings.pSrgbValues         = &no_srgb;
 		pipelineSettings.mSampleCount        = SAMPLE_COUNT_1;
 		pipelineSettings.mSampleQuality      = 0;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetShadowMap->mDesc.mFormat;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetShadowMap->mFormat;
 		pipelineSettings.pRootSignature      = pRootSignatureShadowPass;
 		pipelineSettings.pShaderProgram      = pShaderShadowPass;
-		pipelineSettings.pVertexLayout       = &defaultVertexLayout;
-		pipelineSettings.pRasterizerState    = pRasterizerStateCullNone;
+		pipelineSettings.pVertexLayout       = &gVertexLayoutDefault;
+		pipelineSettings.pRasterizerState    = &rasterizerStateCullNoneDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineShadowPass);
 
 		// brdf
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateEnable;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.pDepthState = &depthStateDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureBRDF;
 		pipelineSettings.pShaderProgram = pShaderBRDF;
-		pipelineSettings.pVertexLayout = &defaultVertexLayout;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pVertexLayout = &gVertexLayoutDefault;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineBRDF);
 
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 0;
-		pipelineSettings.pDepthState = pDepthStateDisable;
+		pipelineSettings.pDepthState = &depthStateDisableDesc;
 		pipelineSettings.pColorFormats = NULL;
-		pipelineSettings.pSrgbValues = NULL;
 		pipelineSettings.mSampleCount = SAMPLE_COUNT_1;
 		pipelineSettings.mSampleQuality = 0;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairClear;
 		pipelineSettings.pShaderProgram = pShaderHairClear;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		pipelineSettings.pBlendState = NULL;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairClear);
 
-		ImageFormat::Enum depthPeelingFormat = ImageFormat::R16F;
+		TinyImageFormat depthPeelingFormat = TinyImageFormat_R16_SFLOAT;
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateNoWrite;
+		pipelineSettings.pDepthState = &depthStateNoWriteDesc;
 		pipelineSettings.pColorFormats = &depthPeelingFormat;
-		pipelineSettings.pSrgbValues = &no_srgb;
 		pipelineSettings.mSampleCount = SAMPLE_COUNT_1;
 		pipelineSettings.mSampleQuality = 0;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairDepthPeeling;
 		pipelineSettings.pShaderProgram = pShaderHairDepthPeeling;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullFront;
-		pipelineSettings.pBlendState = pBlendStateDepthPeeling;
+		pipelineSettings.pRasterizerState = &rasterizerStateDesc;
+		pipelineSettings.pBlendState = &blendStateDepthPeelingDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairDepthPeeling);
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 0;
-		pipelineSettings.pDepthState = pDepthStateDepthResolve;
+		pipelineSettings.pDepthState = &depthStateDepthResolveDesc;
 		pipelineSettings.pColorFormats = NULL;
-		pipelineSettings.pSrgbValues = NULL;
 		pipelineSettings.mSampleCount = SAMPLE_COUNT_1;
 		pipelineSettings.mSampleQuality = 0;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairDepthResolve;
 		pipelineSettings.pShaderProgram = pShaderHairDepthResolve;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairDepthResolve);
 
-		ImageFormat::Enum fillColorsFormat = ImageFormat::RGBA16F;
+		TinyImageFormat fillColorsFormat = TinyImageFormat_R16G16B16A16_SFLOAT;
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateNoWrite;
+		pipelineSettings.pDepthState = &depthStateNoWriteDesc;
 		pipelineSettings.pColorFormats = &fillColorsFormat;
-		pipelineSettings.pSrgbValues = &no_srgb;
 		pipelineSettings.mSampleCount = SAMPLE_COUNT_1;
 		pipelineSettings.mSampleQuality = 0;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairFillColors;
 		pipelineSettings.pShaderProgram = pShaderHairFillColors;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullFront;
-		pipelineSettings.pBlendState = pBlendStateAdd;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
+		pipelineSettings.pBlendState = &blendStateAddDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairFillColors);
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateDisable;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.pDepthState = &depthStateDisableDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairColorResolve;
 		pipelineSettings.pShaderProgram = pShaderHairResolveColor;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
-		pipelineSettings.pBlendState = pBlendStateColorResolve;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
+		pipelineSettings.pBlendState = &blendStateColorResolveDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairColorResolve);
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 0;
-		pipelineSettings.pDepthState = pDepthStateEnable;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetHairShadows[0][0]->mDesc.mFormat;
+		pipelineSettings.pDepthState = &depthStateDesc;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetHairShadows[0][0]->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureHairShadow;
 		pipelineSettings.pShaderProgram = pShaderHairShadow;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineHairShadow);
 
 		PipelineDesc computeDesc = {};
@@ -4287,32 +4247,30 @@ class MaterialPlayground: public IApp
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateNoWrite;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.pDepthState = &depthStateNoWriteDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureShowCapsules;
 		pipelineSettings.pShaderProgram = pShaderShowCapsules;
-		pipelineSettings.pVertexLayout = &defaultVertexLayout;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
-		pipelineSettings.pBlendState = pBlendStateAlphaBlend;
+		pipelineSettings.pVertexLayout = &gVertexLayoutDefault;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
+		pipelineSettings.pBlendState = &blendStateAddDesc;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineShowCapsules);
 
 		pipelineSettings = {};
 		pipelineSettings.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
 		pipelineSettings.mRenderTargetCount = 1;
-		pipelineSettings.pDepthState = pDepthStateEnable;
-		pipelineSettings.pColorFormats = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mFormat;
-		pipelineSettings.pSrgbValues = &pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSrgb;
-		pipelineSettings.mSampleCount = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleCount;
-		pipelineSettings.mSampleQuality = pSwapChain->ppSwapchainRenderTargets[0]->mDesc.mSampleQuality;
-		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mDesc.mFormat;
+		pipelineSettings.pDepthState = &depthStateDesc;
+		pipelineSettings.pColorFormats = &pSwapChain->ppRenderTargets[0]->mFormat;
+		pipelineSettings.mSampleCount = pSwapChain->ppRenderTargets[0]->mSampleCount;
+		pipelineSettings.mSampleQuality = pSwapChain->ppRenderTargets[0]->mSampleQuality;
+		pipelineSettings.mDepthStencilFormat = pRenderTargetDepth->mFormat;
 		pipelineSettings.pRootSignature = pRootSignatureSkeleton;
 		pipelineSettings.pShaderProgram = pShaderSkeleton;
 		pipelineSettings.pVertexLayout = &skeletonVertexLayout;
-		pipelineSettings.pRasterizerState = pRasterizerStateCullNone;
+		pipelineSettings.pRasterizerState = &rasterizerStateCullNoneDesc;
 		pipelineSettings.pBlendState = NULL;
 		addPipeline(pRenderer, &graphicsPipelineDesc, &pPipelineSkeleton);
 		gSkeletonBatcher.LoadPipeline(pPipelineSkeleton);
@@ -4326,7 +4284,7 @@ class MaterialPlayground: public IApp
 		removePipeline(pRenderer, pPipelineSkybox);
 		removePipeline(pRenderer, pPipelineBRDF);
 		removePipeline(pRenderer, pPipelineShadowPass);
-#ifndef DIRECT3D11
+#if !defined(DIRECT3D11)
 		removePipeline(pRenderer, pPipelineHairClear);
 		removePipeline(pRenderer, pPipelineHairDepthPeeling);
 		removePipeline(pRenderer, pPipelineHairDepthResolve);
@@ -4353,7 +4311,7 @@ class MaterialPlayground: public IApp
 		depthPeelingRenderTargetDesc.mArraySize = 1;
 		depthPeelingRenderTargetDesc.mMipLevels = 1;
 		depthPeelingRenderTargetDesc.mSampleCount = SAMPLE_COUNT_1;
-		depthPeelingRenderTargetDesc.mFormat = ImageFormat::R16F;
+		depthPeelingRenderTargetDesc.mFormat = TinyImageFormat_R16_SFLOAT;
         depthPeelingRenderTargetDesc.mClearValue.r = 1.0f;
         depthPeelingRenderTargetDesc.mClearValue.g = 1.0f;
         depthPeelingRenderTargetDesc.mClearValue.b = 1.0f;
@@ -4372,7 +4330,7 @@ class MaterialPlayground: public IApp
 		hairDepthsTextureDesc.mArraySize = 3;
 		hairDepthsTextureDesc.mMipLevels = 1;
 		hairDepthsTextureDesc.mSampleCount = SAMPLE_COUNT_1;
-		hairDepthsTextureDesc.mFormat = ImageFormat::R32UI;
+		hairDepthsTextureDesc.mFormat = TinyImageFormat_R32_UINT;
         hairDepthsTextureDesc.mClearValue.r = 1.0f;
         hairDepthsTextureDesc.mClearValue.g = 1.0f;
         hairDepthsTextureDesc.mClearValue.b = 1.0f;
@@ -4383,7 +4341,7 @@ class MaterialPlayground: public IApp
 		TextureLoadDesc hairDepthsTextureLoadDesc = {};
 		hairDepthsTextureLoadDesc.pDesc = &hairDepthsTextureDesc;
 		hairDepthsTextureLoadDesc.ppTexture = &pTextureHairDepth;
-		addResource(&hairDepthsTextureLoadDesc);
+		addResource(&hairDepthsTextureLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 #else
 		BufferLoadDesc hairDepthsBufferLoadDesc = {};
 		hairDepthsBufferLoadDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_BUFFER | DESCRIPTOR_TYPE_RW_BUFFER;
@@ -4394,7 +4352,7 @@ class MaterialPlayground: public IApp
 		hairDepthsBufferLoadDesc.mDesc.mSize = hairDepthsBufferLoadDesc.mDesc.mElementCount * hairDepthsBufferLoadDesc.mDesc.mStructStride;
 		hairDepthsBufferLoadDesc.mDesc.pDebugName = L"Hair depths buffer";
 		hairDepthsBufferLoadDesc.ppBuffer = &pBufferHairDepth;
-		addResource(&hairDepthsBufferLoadDesc);
+		addResource(&hairDepthsBufferLoadDesc, NULL, LOAD_PRIORITY_NORMAL);
 #endif
 
 		RenderTargetDesc fillColorsRenderTargetDesc = {};
@@ -4404,7 +4362,7 @@ class MaterialPlayground: public IApp
 		fillColorsRenderTargetDesc.mArraySize = 1;
 		fillColorsRenderTargetDesc.mMipLevels = 1;
 		fillColorsRenderTargetDesc.mSampleCount = SAMPLE_COUNT_1;
-		fillColorsRenderTargetDesc.mFormat = ImageFormat::RGBA16F;
+		fillColorsRenderTargetDesc.mFormat = TinyImageFormat_R16G16B16A16_SFLOAT;
         fillColorsRenderTargetDesc.mClearValue.r = 0.0f;
         fillColorsRenderTargetDesc.mClearValue.g = 0.0f;
         fillColorsRenderTargetDesc.mClearValue.b = 0.0f;
@@ -4422,7 +4380,7 @@ class MaterialPlayground: public IApp
 		hairShadowRenderTargetDesc.mArraySize = 1;
 		hairShadowRenderTargetDesc.mMipLevels = 1;
 		hairShadowRenderTargetDesc.mSampleCount = SAMPLE_COUNT_1;
-		hairShadowRenderTargetDesc.mFormat = ImageFormat::D16;
+		hairShadowRenderTargetDesc.mFormat = TinyImageFormat_D16_UNORM;
         hairShadowRenderTargetDesc.mClearValue.depth = 1.0f;
         hairShadowRenderTargetDesc.mClearValue.stencil = 0;
 		hairShadowRenderTargetDesc.mSampleQuality = 0;
@@ -4440,7 +4398,7 @@ class MaterialPlayground: public IApp
         depthRenderTargetDesc.mClearValue.depth = 1.0f;
         depthRenderTargetDesc.mClearValue.stencil = 0;
 		depthRenderTargetDesc.mDepth = 1;
-		depthRenderTargetDesc.mFormat = ImageFormat::D32F;
+		depthRenderTargetDesc.mFormat = TinyImageFormat_D32_SFLOAT;
 		depthRenderTargetDesc.mHeight = mSettings.mHeight;
 		depthRenderTargetDesc.mSampleCount = SAMPLE_COUNT_1;
 		depthRenderTargetDesc.mSampleQuality = 0;
@@ -4454,7 +4412,7 @@ class MaterialPlayground: public IApp
         shadowPassRenderTargetDesc.mClearValue.depth = 1.0f;
         shadowPassRenderTargetDesc.mClearValue.stencil = 0;
 		shadowPassRenderTargetDesc.mDepth = 1;
-		shadowPassRenderTargetDesc.mFormat = ImageFormat::D32F;
+		shadowPassRenderTargetDesc.mFormat = TinyImageFormat_D32_SFLOAT;
 		shadowPassRenderTargetDesc.mHeight = gShadowMapDimensions;
 		shadowPassRenderTargetDesc.mWidth  = gShadowMapDimensions;
 		shadowPassRenderTargetDesc.mSampleCount = SAMPLE_COUNT_1;
@@ -4470,13 +4428,11 @@ class MaterialPlayground: public IApp
 		swapChainDesc.mWidth = mSettings.mWidth;
 		swapChainDesc.mHeight = mSettings.mHeight;
 		swapChainDesc.mImageCount = gImageCount;
-		swapChainDesc.mSampleCount = SAMPLE_COUNT_1;
 		swapChainDesc.mColorFormat = getRecommendedSwapchainFormat(true);
         swapChainDesc.mColorClearValue.r = 0.0f;
         swapChainDesc.mColorClearValue.g = 0.0f;
         swapChainDesc.mColorClearValue.b = 0.0f;
         swapChainDesc.mColorClearValue.a = 0.0f;
-		swapChainDesc.mSrgb = false;
 		swapChainDesc.mEnableVsync = false;
 		::addSwapChain(pRenderer, &swapChainDesc, &pSwapChain);
 	}
@@ -4548,7 +4504,7 @@ void GuiController::UpdateDynamicUI()
 	}
 
 #if !defined(TARGET_IOS) && !defined(_DURANGO) && !defined(__ANDROID__)
-	if (pSwapChain->mDesc.mEnableVsync != gVSyncEnabled)
+	if (pSwapChain->mEnableVsync != gVSyncEnabled)
 	{
 		waitQueueIdle(pGraphicsQueue);
 		::toggleVSync(pRenderer, &pSwapChain);
@@ -4595,8 +4551,6 @@ void GuiController::AddGui()
 		RENDER_MODE_SHADED, RENDER_MODE_ALBEDO, RENDER_MODE_NORMALS, RENDER_MODE_ROUGHNESS, RENDER_MODE_METALLIC, RENDER_MODE_AO, (uint32_t)NULL
 	};
 	const uint32_t dropDownCount3 = (sizeof(renderModeNames) / sizeof(renderModeNames[0])) - 1;
-
-  pGuiWindowMain->AddWidget(CheckboxWidget("Toggle Micro Profiler", &bToggleMicroProfiler));
 
 	// SCENE GUI
 #if !defined(TARGET_IOS) && !defined(_DURANGO) && !defined(__ANDROID__)
@@ -4806,7 +4760,15 @@ void GuiController::AddGui()
 
 void GuiController::Exit()
 {
-	hairDynamicWidgets.clear();
+	hairShadingDynamicWidgets.Destroy();
+	hairSimulationDynamicWidgets.Destroy();
+	materialDynamicWidgets.Destroy();
+	for (HairDynamicWidgets& w : hairDynamicWidgets)
+	{
+		w.hairShading.Destroy();
+		w.hairSimulation.Destroy();
+	}
+	hairDynamicWidgets.set_capacity(0);
 }
 
 DEFINE_APPLICATION_MAIN(MaterialPlayground)

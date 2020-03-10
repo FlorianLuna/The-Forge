@@ -5,7 +5,7 @@
 
 
 /*
- * Copyright (c) 2018-2019 Confetti Interactive Inc.
+ * Copyright (c) 2018-2020 The Forge Interactive Inc.
  * 
  * This file is part of The-Forge
  * (see https://github.com/ConfettiFX/The-Forge).
@@ -33,12 +33,12 @@
 
 #include "shader_defs.h"
 
-layout(std140, set = 0, binding = 0) uniform uniforms
+layout(std140, UPDATE_FREQ_PER_FRAME, binding = 0) uniform uniforms
 {
 	PerFrameConstants uniformsData;
 };
 
-layout(std430, set = 0, binding = 1) restrict readonly buffer lights
+layout(std430, UPDATE_FREQ_NONE, binding = 1) restrict readonly buffer lights
 {
 	LightData lightsBuffer[];
 };
@@ -53,5 +53,5 @@ void main()
 	uint instanceId = gl_InstanceIndex;
 	oLightPos = vec3(lightsBuffer[instanceId].position.x, lightsBuffer[instanceId].position.y, lightsBuffer[instanceId].position.z);
 	oLightColor = vec3(lightsBuffer[instanceId].color.r, lightsBuffer[instanceId].color.g, lightsBuffer[instanceId].color.b);
-	gl_Position = (uniformsData.transform[VIEW_CAMERA].mvp * vec4((iPos.xyz * LIGHT_SIZE) + oLightPos, 1));
+	gl_Position = (uniformsData.transform[VIEW_CAMERA].vp * vec4((iPos.xyz * LIGHT_SIZE) + oLightPos, 1));
 }
